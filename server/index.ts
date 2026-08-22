@@ -231,8 +231,11 @@ app.use('/relay', async (req, res) => {
   for (const [k, v] of Object.entries(req.headers)) {
     if (typeof v === 'string' && !PH_DROP_HEADERS.has(k)) headers[k] = v
   }
-  /* real client IP, else PostHog geolocates everyone to our datacenter */
-  if (req.ip) headers['x-forwarded-for'] = req.ip
+  /* keep the incoming XFF chain — its first entry is the real client IP
+     and PostHog geolocates from it. Overwriting with req.ip would send
+     Railway's edge-PoP address instead (trust proxy only strips one hop).
+     Fall back to req.ip when there is no chain (local dev). */
+  if (!headers['x-forwarded-for'] && req.ip) headers['x-forwarded-for'] = req.ip
 
   try {
     /* the body read must sit inside the try: navigating away mid-upload
