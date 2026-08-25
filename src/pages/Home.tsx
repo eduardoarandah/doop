@@ -8,10 +8,12 @@ import { timeAgo } from '../lib/time'
 import { CodeBlock } from '../components/ConnectModal'
 import { AgentIcon } from '../components/AgentIcon'
 import { posthog } from '../lib/posthog'
+import { useMe } from '../lib/me'
 
 export function Home() {
   const [canvases, setCanvases] = useState<CanvasMeta[] | null>(null)
   const { data: session } = authClient.useSession()
+  const me = useMe(session?.user.id)
 
   useEffect(() => {
     api.listCanvases().then(setCanvases).catch(console.error)
@@ -52,6 +54,11 @@ export function Home() {
           <span className="spacer" />
           {session && (
             <span className="home-account">
+              {me?.admin && (
+                <button className="btn ghost" onClick={() => navigate('/admin')}>
+                  Admin
+                </button>
+              )}
               {session.user.name}
               <button
                 className="btn ghost"

@@ -3,9 +3,12 @@ import { Home } from './pages/Home'
 import { CanvasPage } from './pages/CanvasPage'
 import { AuthPage } from './pages/AuthPage'
 import { Landing } from './pages/Landing'
+import { Admin } from './pages/Admin'
 import { authClient } from './lib/auth'
 import { setName } from './lib/identity'
-import { posthog, syncReplayForUser } from './lib/posthog'
+import { posthog, syncReplayForUser, suspendAnalyticsWhileImpersonating } from './lib/posthog'
+import { useMe } from './lib/me'
+import { adminApi } from './lib/api'
 
 export function navigate(path: string) {
   history.pushState(null, '', path)
@@ -15,6 +18,7 @@ export function navigate(path: string) {
 export function App() {
   const [path, setPath] = useState(location.pathname)
   const { data: session, isPending } = authClient.useSession()
+  const me = useMe(session?.user.id)
   const identifiedUserId = useRef<string | null>(null)
 
   useEffect(() => {
@@ -34,13 +38,23 @@ export function App() {
       }
       return
     }
+    /* Wait for /api/me before identifying anyone. Impersonation swaps the
+       session cookie, so `user` here is the person being VIEWED — identifying
+       them would write an admin's support session into that customer's
+       profile and replay timeline. Only /api/me can tell the two apart. */
+    if (!me) return
+    if (me.impersonating) {
+      suspendAnalyticsWhileImpersonating()
+      identifiedUserId.current = null
+      return
+    }
 
     if (identifiedUserId.current === user.id) return
     if (identifiedUserId.current) posthog.reset()
     posthog.identify(user.id, { email: user.email, name: user.name })
     syncReplayForUser(user.email)
     identifiedUserId.current = user.id
-  }, [session?.user])
+  }, [session?.user, me])
 
   /* the account name is the identity shown on cursors and in the feed */
   useEffect(() => {
@@ -60,8 +74,51 @@ export function App() {
   }
 
   const canvasMatch = path.match(/^\/c\/([^/]+)/)
-  if (canvasMatch) return <CanvasPage canvasId={canvasMatch[1]} key={canvasMatch[1]} />
-  return <Home />
+  const page = canvasMatch ? (
+    <CanvasPage canvasId={canvasMatch[1]} key={canvasMatch[1]} />
+  ) : path.startsWith('/admin') ? (
+    <Admin />
+  ) : (
+    <Home />
+  )
+
+  /* The banner is not decoration: an impersonated session looks exactly like
+     being signed in as that person, and forgetting you are in one is how
+     support tools cause incidents. */
+  return me?.impersonating ? (
+    <>
+      <ImpersonationBanner name={session.user.name} />
+      <div className="impersonating-shell">{page}</div>
+    </>
+  ) : (
+    page
+  )
+}
+
+function ImpersonationBanner({ name }: { name: string }) {
+  const [leaving, setLeaving] = useState(false)
+  return (
+    <div className="impersonation-banner">
+      <span>
+        Viewing as <strong>{name}</strong> — read only, expires after 15 minutes.
+      </span>
+      <button
+        className="btn ghost small"
+        disabled={leaving}
+        onClick={() => {
+          setLeaving(true)
+          /* the cookie swaps back to the admin's own session; reload rather
+             than reconcile every piece of per-user state in memory */
+          adminApi
+            .stopImpersonating()
+            .then(() => location.assign('/admin'))
+            .catch(() => location.assign('/'))
+        }}
+      >
+        {leaving ? 'Leaving…' : 'Stop viewing'}
+      </button>
+    </div>
+  )
 }
 
 /** The layered D: two stacked frames — the human's layer over the agent's —

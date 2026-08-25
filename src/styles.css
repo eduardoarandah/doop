@@ -5779,3 +5779,129 @@ textarea {
     transform: scale(0.7);
   }
 }
+
+/* ---------- admin ---------- */
+
+.btn.small {
+  font-size: 12px;
+  padding: 5px 10px;
+}
+.sub.small {
+  font-size: 13px;
+  color: var(--ink-faint);
+}
+
+.chip.admin-chip {
+  color: var(--accent-ink);
+  border-color: rgba(194, 58, 37, 0.4);
+  background: rgba(229, 83, 60, 0.08);
+}
+.chip.banned-chip {
+  color: #8a5b00;
+  border-color: rgba(138, 91, 0, 0.35);
+  background: rgba(255, 184, 0, 0.12);
+}
+
+.admin-controls {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 28px 0 18px;
+  flex-wrap: wrap;
+}
+.admin-tabs {
+  display: inline-flex;
+  gap: 8px;
+}
+.admin-tabs .btn.on {
+  border-color: var(--ink);
+  color: var(--ink);
+}
+.admin-search {
+  flex: 1;
+  min-width: 200px;
+  font-family: var(--font-ui);
+  font-size: 14px;
+  padding: 8px 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+  color: var(--ink);
+}
+.admin-search:focus {
+  outline: none;
+  border-color: var(--ink-faint);
+}
+
+/* the admin card is a container, not a button: its actions are inside it */
+.canvas-card.admin-card:hover {
+  transform: none;
+  box-shadow: var(--shadow-card);
+  border-color: var(--line);
+}
+.admin-card .card-info .btn {
+  margin-top: 10px;
+}
+
+.admin-users {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.admin-user-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 12px 16px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+}
+.admin-user-row .name {
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: 15px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.admin-user-row .meta {
+  margin-top: 4px;
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  font-size: 13px;
+  color: var(--ink-soft);
+}
+
+/* impersonation: deliberately loud, and it displaces the page rather than
+   floating over it — a banner you can scroll past is a banner you forget */
+.impersonation-banner {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 900;
+  height: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  font-size: 13px;
+  background: repeating-linear-gradient(-45deg, rgba(229, 83, 60, 0.16) 0 10px, rgba(229, 83, 60, 0.08) 10px 20px);
+  border-bottom: 1px solid var(--accent);
+  color: var(--accent-ink);
+  backdrop-filter: blur(6px);
+}
+.impersonating-shell {
+  padding-top: 40px;
+  height: 100vh;
+  box-sizing: border-box;
+  overflow: auto;
+}
+/* the canvas is `position: fixed; inset: 0`, so it ignores the shell's
+   padding — move its inset instead, or it renders under the banner */
+.impersonating-shell .workspace {
+  inset: 40px 0 0;
+}

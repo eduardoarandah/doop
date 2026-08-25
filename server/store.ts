@@ -18,6 +18,24 @@ class Store {
     }
   }
 
+  /** The dashboard row for one canvas. `viewerId` decides only whether the
+   *  canvas is marked as shared-with-me; pass undefined for views that have
+   *  no viewer-relative meaning (the admin index). */
+  private toMeta(c: Canvas, viewerId?: string) {
+    return {
+      id: c.id,
+      name: c.name,
+      ownerId: c.ownerId,
+      shared: viewerId !== undefined ? c.ownerId !== viewerId || undefined : undefined,
+      createdAt: c.createdAt,
+      updatedAt: c.updatedAt,
+      frameCount: c.frames.length,
+      /* most recently touched frame — the home dashboard renders it as the
+         canvas preview via the public /i/ image pipeline */
+      previewFrameId: c.frames.length ? c.frames.reduce((a, b) => (b.updatedAt > a.updatedAt ? b : a)).id : undefined,
+    }
+  }
+
   /** Canvases visible to a user: their own plus ones they were invited to.
    *  Unowned (legacy/seeded) canvases are NOT listed — listing them to
    *  everyone leaked one user's work onto every other user's dashboard.
@@ -26,18 +44,24 @@ class Store {
     return [...this.canvases.values()]
       .filter((c) => c.ownerId === userId || c.memberIds?.includes(userId))
       .sort((a, b) => b.updatedAt - a.updatedAt)
-      .map((c) => ({
-        id: c.id,
-        name: c.name,
-        ownerId: c.ownerId,
-        shared: c.ownerId !== userId || undefined,
-        createdAt: c.createdAt,
-        updatedAt: c.updatedAt,
-        frameCount: c.frames.length,
-        /* most recently touched frame — the home dashboard renders it as the
-           canvas preview via the public /i/ image pipeline */
-        previewFrameId: c.frames.length ? c.frames.reduce((a, b) => (b.updatedAt > a.updatedAt ? b : a)).id : undefined,
-      }))
+      .map((c) => this.toMeta(c, userId))
+  }
+
+  /** Every canvas on the instance, for the admin index only. Access is the
+   *  caller's problem — the only caller is server/admin.ts, behind isAdmin.
+   *  A deliberately separate method rather than a flag on listCanvases: a
+   *  boolean parameter is the kind of thing that eventually gets passed
+   *  `true` from a route that shouldn't. */
+  listAllCanvases(limit = 200) {
+    const all = [...this.canvases.values()].sort((a, b) => b.updatedAt - a.updatedAt)
+    return {
+      total: all.length,
+      canvases: all.slice(0, limit).map((c) => ({
+        ...this.toMeta(c),
+        linkAccess: c.linkAccess ?? 'none',
+        memberCount: c.memberIds?.length ?? 0,
+      })),
+    }
   }
 
   createCanvas(name: string, ownerId?: string): Canvas {

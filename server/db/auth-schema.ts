@@ -11,6 +11,12 @@ export const user = pgTable('user', {
   image: text('image'),
   createdAt: timestamp('created_at').notNull().defaultNow(),
   updatedAt: timestamp('updated_at').notNull().defaultNow(),
+  /* admin plugin fields — all nullable so existing rows need no backfill.
+     'admin' is the only role we act on; everyone else is an ordinary user. */
+  role: text('role'),
+  banned: boolean('banned').default(false),
+  banReason: text('ban_reason'),
+  banExpires: timestamp('ban_expires'),
 })
 
 export const session = pgTable('session', {
@@ -24,6 +30,10 @@ export const session = pgTable('session', {
   userId: text('user_id')
     .notNull()
     .references(() => user.id, { onDelete: 'cascade' }),
+  /* set when an admin is viewing as this user: the admin's own user id.
+     It is the audit trail for impersonation and the flag every read-only
+     guard reads — see server/index.ts. */
+  impersonatedBy: text('impersonated_by'),
 })
 
 export const account = pgTable('account', {

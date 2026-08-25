@@ -1,6 +1,6 @@
 import { betterAuth } from 'better-auth'
-import { eq } from 'drizzle-orm'
-import { mcp } from 'better-auth/plugins'
+import { eq, inArray, or, isNull, ne, and, sql } from 'drizzle-orm'
+import { admin, mcp } from 'better-auth/plugins'
 import { drizzleAdapter } from 'better-auth/adapters/drizzle'
 import { db } from './db/index.ts'
 import * as authSchema from './db/auth-schema.ts'
@@ -15,6 +15,68 @@ import { mailerConfigured, sendMail } from './mailer.ts'
 
 /** The canonical public origin: OAuth authorize/token/login URLs live here. */
 export const PUBLIC_ORIGIN = process.env.BETTER_AUTH_URL || 'http://localhost:4300'
+
+/**
+ * Who gets the admin role, by email. Ids can't do this job: on a fresh
+ * deploy nobody has an id until they sign up, which would mean a redeploy
+ * to name the first admin. Emails are known in advance, so this reconciles
+ * into user.role at signup and at boot, and everything downstream — this
+ * plugin's own ban/impersonate endpoints included — reads only the role.
+ *
+ * Deliberately one-way: dropping an email here does not demote anyone.
+ * Demotion is an explicit setRole, so there's an actor behind it.
+ */
+const ADMIN_EMAILS = (process.env.ADMIN_EMAILS || '')
+  .split(',')
+  .map((s) => s.trim().toLowerCase())
+  .filter(Boolean)
+
+/**
+ * An email address only identifies someone once they have PROVEN they own it.
+ * Without SMTP nothing can ever be verified and signup is open (see
+ * requireEmailVerification below), so an unguarded ADMIN_EMAILS would hand
+ * the admin role to whoever signs up with the address first — a stranger can
+ * type your email as easily as you can. Outside development we therefore
+ * refuse to promote at all rather than promote an unproven claim.
+ */
+function mayPromote(user: { email: string; emailVerified: boolean }): boolean {
+  if (!ADMIN_EMAILS.includes(user.email.toLowerCase())) return false
+  if (user.emailVerified) return true
+  if (mailerConfigured) return false // verification is possible — wait for it
+  return process.env.NODE_ENV !== 'production'
+}
+
+async function promote(userId: string, email: string): Promise<void> {
+  await db.update(authSchema.user).set({ role: 'admin' }).where(eq(authSchema.user.id, userId))
+  console.log(`⟡ admin             ${email}`)
+}
+
+/** Promote listed users who already exist. Idempotent; runs at boot. */
+export async function syncAdmins(): Promise<void> {
+  if (!ADMIN_EMAILS.length) return
+  if (!mailerConfigured && process.env.NODE_ENV === 'production') {
+    console.warn(
+      '⚠ ADMIN_EMAILS is set but no SMTP is configured, so email ownership cannot be verified and nobody will be promoted. Configure SMTP_HOST, or set the admin role directly in the database.',
+    )
+    return
+  }
+  /* lower() on both sides: the signup path compares case-insensitively, and
+     an admin who silently isn't one because their address was capitalised is
+     the kind of bug nobody thinks to look for */
+  const candidates = await db
+    .select({ id: authSchema.user.id, email: authSchema.user.email, emailVerified: authSchema.user.emailVerified })
+    .from(authSchema.user)
+    .where(
+      and(
+        inArray(sql`lower(${authSchema.user.email})`, ADMIN_EMAILS),
+        /* role is NULL on accounts created before the admin plugin landed,
+           and `NULL != 'admin'` is NULL — not true — so isNull is required
+           or exactly the pre-existing accounts this exists for are skipped */
+        or(isNull(authSchema.user.role), ne(authSchema.user.role, 'admin')),
+      ),
+    )
+  for (const u of candidates) if (mayPromote(u)) await promote(u.id, u.email)
+}
 
 function buildAuth() {
   if (!process.env.BETTER_AUTH_SECRET && process.env.NODE_ENV === 'production') {
@@ -55,6 +117,12 @@ function buildAuth() {
     emailVerification: {
       sendOnSignUp: mailerConfigured,
       autoSignInAfterVerification: true,
+      /* the moment ownership is proven is the moment ADMIN_EMAILS may act on
+         it — without this, a listed admin would stay unprivileged until the
+         next restart picked them up in syncAdmins */
+      afterEmailVerification: async (user) => {
+        if (mayPromote({ email: user.email, emailVerified: true })) await promote(user.id, user.email)
+      },
       sendVerificationEmail: async ({ user, url }) => {
         await sendMail({
           to: user.email,
@@ -72,6 +140,11 @@ function buildAuth() {
             const first = (user.name || 'Your').split(/\s+/)[0]
             const canvas = store.createCanvas(`${first}'s first canvas`, user.id)
             demo.markPending(canvas.id)
+            /* the other half of the ADMIN_EMAILS reconcile: syncAdmins covers
+               people who already existed at boot, this covers signups after.
+               With SMTP on, a fresh signup is never verified yet, so the
+               promotion happens in afterEmailVerification instead. */
+            if (mayPromote(user)) await promote(user.id, user.email)
           },
         },
       },
@@ -79,7 +152,10 @@ function buildAuth() {
     /* OAuth provider for MCP clients: agents connect to /mcp with a bearer
        token their human approved in the browser. The SPA login gate lives
        at every path, so "/" works as the login page. */
-    plugins: [mcp({ loginPage: '/' })],
+    /* admin: role/ban/impersonate. 15 minutes rather than the default hour —
+       an expired impersonation session doesn't revert to the admin, it signs
+       them out entirely, so the window should be short and re-entered. */
+    plugins: [mcp({ loginPage: '/' }), admin({ impersonationSessionDuration: 15 * 60 })],
   })
 }
 

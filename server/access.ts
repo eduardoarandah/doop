@@ -10,6 +10,18 @@ import type { Canvas } from '../shared/types.ts'
  * Every canvas-scoped surface — REST, the WS join, MCP tools — must gate
  * through this one helper.
  */
+/**
+ * Instance admins. Deliberately NOT consulted by canAccessCanvas: that gate
+ * is shared with MCP, so an admin branch there would hand every agent holding
+ * an admin's OAuth token read/write on every canvas in the instance. Admins
+ * get their own routes (server/admin.ts), and reach a specific canvas by
+ * impersonating its owner — which goes through the gate below as that owner,
+ * leaving session.impersonatedBy behind as the audit trail.
+ */
+export function isAdmin(user: { role?: string | null } | undefined): boolean {
+  return user?.role === 'admin'
+}
+
 export function canAccessCanvas(userId: string | undefined, canvas: Canvas): boolean {
   if (!canvas.ownerId) return true
   if (!userId) return false

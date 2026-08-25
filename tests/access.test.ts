@@ -1,124 +1,35 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
-import { spawn, type ChildProcess } from 'node:child_process'
-import { mkdtempSync, rmSync } from 'node:fs'
-import { tmpdir } from 'node:os'
-import path from 'node:path'
-import WebSocket from 'ws'
+import { Client, startServer, type Server } from './harness.ts'
 
 /**
- * Integration tests for the canvas access model, run against the REAL server:
- * spawned as a child process on a fresh PGlite database in a temp directory,
- * exercised over HTTP and WebSocket exactly like the browser and MCP clients.
- * No mocks — this is the same surface a self-hoster exposes to the internet.
+ * Integration tests for the canvas access model, run against the REAL server
+ * (see ./harness.ts): a child process on a fresh PGlite database, exercised
+ * over HTTP and WebSocket exactly like the browser and MCP clients. No mocks
+ * — this is the same surface a self-hoster exposes to the internet.
  */
 
 const PORT = 4977
-const BASE = `http://localhost:${PORT}`
-const ROOT = process.cwd() // vitest runs from the repo root
 
-let server: ChildProcess
-let dataDir: string
-
-/** Minimal cookie-jar client: better-auth drives everything through cookies. */
-class Client {
-  cookies = new Map<string, string>()
-
-  private header() {
-    return [...this.cookies.entries()].map(([k, v]) => `${k}=${v}`).join('; ')
-  }
-
-  async req(pathname: string, init: RequestInit = {}): Promise<Response> {
-    const res = await fetch(BASE + pathname, {
-      ...init,
-      headers: { 'Content-Type': 'application/json', Cookie: this.header(), ...init.headers },
-      redirect: 'manual',
-    })
-    for (const c of res.headers.getSetCookie()) {
-      const [pair] = c.split(';')
-      const idx = pair.indexOf('=')
-      this.cookies.set(pair.slice(0, idx).trim(), pair.slice(idx + 1).trim())
-    }
-    return res
-  }
-
-  get(p: string) {
-    return this.req(p)
-  }
-
-  post(p: string, body?: unknown) {
-    return this.req(p, { method: 'POST', body: body === undefined ? undefined : JSON.stringify(body) })
-  }
-
-  patch(p: string, body: unknown) {
-    return this.req(p, { method: 'PATCH', body: JSON.stringify(body) })
-  }
-
-  delete(p: string) {
-    return this.req(p, { method: 'DELETE' })
-  }
-
-  async signUp(email: string, name: string) {
-    const res = await this.post('/api/auth/sign-up/email', { email, password: 'password12345', name })
-    expect(res.status).toBe(200)
-    return this
-  }
-
-  /** join a canvas room over WS; resolves with how the server answered */
-  joinWs(canvasId: string): Promise<{ kind: 'init' } | { kind: 'closed'; code: number }> {
-    return new Promise((resolve, reject) => {
-      const ws = new WebSocket(`ws://localhost:${PORT}/ws`, { headers: { Cookie: this.header() } })
-      const timer = setTimeout(() => {
-        ws.terminate()
-        reject(new Error('ws join timed out'))
-      }, 8000)
-      ws.on('open', () =>
-        ws.send(JSON.stringify({ type: 'join', canvasId, clientId: `t-${Math.random()}`, name: 't', kind: 'user' })),
-      )
-      ws.on('message', (d) => {
-        if (JSON.parse(String(d)).type === 'init') {
-          clearTimeout(timer)
-          ws.close()
-          resolve({ kind: 'init' })
-        }
-      })
-      ws.on('close', (code) => {
-        clearTimeout(timer)
-        resolve({ kind: 'closed', code })
-      })
-      ws.on('error', () => {}) // close event carries the verdict
-    })
-  }
-}
+let server: Server
+let BASE: string
 
 beforeAll(async () => {
-  dataDir = mkdtempSync(path.join(tmpdir(), 'doop-test-'))
-  server = spawn(path.join(ROOT, 'node_modules', '.bin', 'tsx'), [path.join(ROOT, 'server', 'index.ts')], {
-    cwd: dataDir, // PGlite persists to <cwd>/data — isolated per run
-    env: { ...process.env, PORT: String(PORT), NODE_ENV: undefined as unknown as string },
-    stdio: 'ignore',
-  })
-  const deadline = Date.now() + 60_000
-  for (;;) {
-    try {
-      const res = await fetch(`${BASE}/healthz`)
-      if (res.ok) break
-    } catch {
-      /* not up yet */
-    }
-    if (Date.now() > deadline) throw new Error('server did not boot within 60s')
-    await new Promise((r) => setTimeout(r, 500))
-  }
+  server = await startServer(PORT)
+  BASE = server.base
 }, 70_000)
 
-afterAll(() => {
-  server?.kill()
-  rmSync(dataDir, { recursive: true, force: true })
-})
+afterAll(() => server?.stop())
 
 describe('canvas access model', () => {
-  const owner = new Client()
-  const invited = new Client()
-  const stranger = new Client()
+  /* assigned once the server is up — the clients need its base URL and port */
+  let owner: Client
+  let invited: Client
+  let stranger: Client
+  beforeAll(() => {
+    owner = new Client(server)
+    invited = new Client(server)
+    stranger = new Client(server)
+  })
   let canvasId: string
   let frameId: string
   let invitedId: string

@@ -158,6 +158,21 @@ email is printed to the server log, links included — the flows still work in d
 Env: `BETTER_AUTH_SECRET` (required in production), `TRUSTED_ORIGINS` (comma-separated,
 defaults to the localhost dev origins).
 
+### Instance admins
+
+`ADMIN_EMAILS` (comma-separated) names the accounts that get the `admin` role, applied at
+signup, on email verification, and at boot — so you can name an admin before or after they
+have an account. **This requires SMTP in production**: an address only identifies someone
+once they have proven they own it, and without a mailer signup is open, so anyone could sign
+up as your address and take the role with it. A production instance without SMTP promotes
+nobody and warns at boot; set the role directly in the database if that is your setup.
+Admins get `/admin`: every canvas and account on the instance, and "view as", which hands
+them a real but **read-only** 15-minute session as that user. Being an admin does not widen
+canvas access itself: the gate in [`server/access.ts`](server/access.ts) is shared with MCP,
+so a privileged read there would give every agent holding an admin's token the run of the
+instance. View-as sessions cannot write, cannot connect agents, and record who is behind
+them in `session.impersonated_by`.
+
 ## Agent auth (MCP OAuth)
 
 The `/mcp` endpoint requires OAuth. Adding the server in Claude Code / Codex triggers

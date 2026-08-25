@@ -144,3 +144,33 @@ export const api = {
   retryComment: (commentId: string) => req(`/api/comments/${commentId}/retry`, { method: 'POST' }),
   retryTaskFeedback: (feedbackId: string) => req(`/api/feedback/${feedbackId}/retry`, { method: 'POST' }),
 }
+
+export interface AdminCanvas extends CanvasMeta {
+  linkAccess: 'edit' | 'none'
+  memberCount: number
+  owner?: { id: string; name: string; email: string }
+}
+
+export interface AdminUser {
+  id: string
+  name: string
+  email: string
+  role: string | null
+  banned: boolean | null
+  createdAt: number
+  canvasCount: number
+}
+
+/** Instance-admin surface. Every route 404s for non-admins, so a failure here
+ *  is indistinguishable from the feature not existing — which is the point. */
+export const adminApi = {
+  canvases: () => req<{ total: number; canvases: AdminCanvas[] }>('/api/admin/canvases'),
+  stats: () => req<{ users: number; canvases: number; frames: number }>('/api/admin/stats'),
+  users: () => req<AdminUser[]>('/api/admin/users'),
+
+  /* better-auth's own endpoints, not ours: they swap the session cookie, so
+     every caller reloads afterwards rather than trying to reconcile state. */
+  impersonate: (userId: string) =>
+    req('/api/auth/admin/impersonate-user', { method: 'POST', body: JSON.stringify({ userId }) }),
+  stopImpersonating: () => req('/api/auth/admin/stop-impersonating', { method: 'POST' }),
+}

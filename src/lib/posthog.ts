@@ -76,4 +76,18 @@ export function syncReplayForUser(email: string | null | undefined) {
   }
 }
 
+/** An admin viewing as another user. Their navigation must not be written to
+ *  the customer's PostHog profile, and must not be recorded at all.
+ *
+ *  Deliberately does NOT go through syncReplayForUser: that function keys the
+ *  persisted NO_REPLAY_KEY flag off the account email, so a borrowed email
+ *  would rewrite whose browser this is — an internal operator viewing as an
+ *  external user would clear their own exclusion and keep recording after the
+ *  support session ended. */
+export function suspendAnalyticsWhileImpersonating() {
+  if (!key) return
+  posthog.reset() // subsequent events are anonymous, not the customer's
+  posthog.stopSessionRecording()
+}
+
 export { posthog }

@@ -9,8 +9,9 @@ import { oAuthDiscoveryMetadata } from 'better-auth/plugins'
 import { WebSocketServer, WebSocket } from 'ws'
 import { store } from './store.ts'
 import * as actions from './actions.ts'
-import { canAccessCanvas } from './access.ts'
-import { auth, initAuth, PUBLIC_ORIGIN } from './auth.ts'
+import { canAccessCanvas, isAdmin } from './access.ts'
+import { auth, initAuth, syncAdmins, getUserName, PUBLIC_ORIGIN } from './auth.ts'
+import { adminRouter } from './admin.ts'
 import * as demo from './demo.ts'
 import { db, initDb } from './db/index.ts'
 import * as authSchema from './db/auth-schema.ts'
@@ -50,6 +51,7 @@ const BUILD_ID = (() => {
 /* boot: connect the DB, hydrate memory, import pre-DB store.json once */
 await initDb()
 initAuth()
+await syncAdmins() // ADMIN_EMAILS -> user.role, for accounts that already exist
 let data = await persist.hydrate()
 if (data.canvases.length === 0 && (await persist.importLegacyJson())) {
   data = await persist.hydrate()
@@ -111,6 +113,10 @@ interface Conn {
   ws: WebSocket
   canvasId: string
   presence: Presence
+  /** an admin viewing as someone else: receives updates, emits nothing.
+   *  Showing their borrowed identity as a live cursor would tell the room
+   *  the owner is here when they aren't. */
+  silent?: boolean
 }
 
 const conns = new Map<WebSocket, Conn>()
@@ -404,8 +410,29 @@ app.put('/u/:token', async (req, res) => {
 })
 
 /* better-auth handles /api/auth/* — mounted before express.json (it reads
-   the raw body itself) and before the session gate below */
-app.all('/api/auth/*', (req, res) => toNodeHandler(auth)(req, res))
+   the raw body itself) and before the session gate below. Being mounted
+   earlier means it also escapes the read-only rule on /api, so an admin
+   who is viewing as someone else is filtered here instead:
+     - the MCP OAuth flow authorises off the browser session, so it would
+       mint a long-lived agent token belonging to the person being viewed,
+       outliving the 15-minute view-as session entirely;
+     - every other write (update-user, change-email, revoke-sessions, …)
+       would edit the account of the person being viewed while the banner
+       says "read only".
+   An allowlist, not a blocklist: whatever endpoints a future better-auth
+   plugin adds are refused by default rather than discovered later. */
+const MCP_OAUTH_PATHS = /^\/api\/auth\/(mcp\/|oauth2\/(authorize|consent|token))/
+const VIEW_AS_ALLOWED = /^\/api\/auth\/(sign-out|admin\/stop-impersonating)$/
+app.all('/api/auth/*', async (req, res) => {
+  const restricted = MCP_OAUTH_PATHS.test(req.path) || (req.method !== 'GET' && !VIEW_AS_ALLOWED.test(req.path))
+  if (restricted) {
+    const session = await auth.api.getSession({ headers: fromNodeHeaders(req.headers) }).catch(() => null)
+    if (session && (session.session as { impersonatedBy?: string | null }).impersonatedBy) {
+      return res.status(403).json({ error: 'viewing as another user — read only' })
+    }
+  }
+  toNodeHandler(auth)(req, res)
+})
 
 app.use(express.json({ limit: '10mb' }))
 
@@ -429,11 +456,14 @@ interface SessionUser {
   id: string
   name: string
   email: string
+  role?: string | null
 }
 declare global {
   namespace Express {
     interface Request {
       user?: SessionUser
+      /** admin's user id when this session is a "view as" — see /api/admin */
+      impersonatedBy?: string
     }
   }
 }
@@ -442,13 +472,34 @@ app.use('/api', async (req, res, next) => {
     const session = await auth.api.getSession({ headers: fromNodeHeaders(req.headers) })
     if (!session) return res.status(401).json({ error: 'unauthorized' })
     req.user = session.user
+    req.impersonatedBy = (session.session as { impersonatedBy?: string | null }).impersonatedBy ?? undefined
+    /* Viewing as someone else is read-only, full stop. Every doop mutation is
+       a non-GET REST call — the websocket after `join` carries only cursor,
+       editing and frame:drag — so this single rule covers the whole surface.
+       better-auth's own routes are mounted earlier (/api/auth/*), so signing
+       out and stop-impersonating are unaffected. */
+    if (req.impersonatedBy && req.method !== 'GET') {
+      return res.status(403).json({ error: 'viewing as another user — read only' })
+    }
     next()
   } catch (err) {
     next(err)
   }
 })
 
-app.get('/api/me', (req, res) => res.json(req.user))
+app.get('/api/me', async (req, res) => {
+  const { id, name, email } = req.user!
+  res.json({
+    id,
+    name,
+    email,
+    admin: isAdmin(req.user),
+    /* the SPA cannot infer this: impersonation swaps the session cookie
+       outright, so everything else on this response describes the person
+       being viewed, not the admin doing the viewing */
+    impersonating: req.impersonatedBy ? { byName: (await getUserName(req.impersonatedBy)) ?? 'an admin' } : undefined,
+  })
+})
 
 /* Canvas access on the REST surface: resolve the canvas (or the frame's
    canvas) and run it through canAccessCanvas before touching anything.
@@ -479,6 +530,8 @@ function requireFrame(req: express.Request, res: express.Response, frameId: stri
   }
   return frame
 }
+
+app.use('/api/admin', adminRouter)
 
 /* free-tier meter for the resident team: {used, limit, connected} */
 app.get('/api/agent-allowance', (req, res) => {
@@ -1060,9 +1113,10 @@ wss.on('connection', (ws, upgradeReq) => {
         kind: 'user',
         activeFrameId: null,
       }
-      conns.set(ws, { ws, canvasId: msg.canvasId, presence })
+      const silent = !!(session.session as { impersonatedBy?: string | null }).impersonatedBy
+      conns.set(ws, { ws, canvasId: msg.canvasId, presence, silent })
       const others = room(msg.canvasId)
-        .filter((c) => c.ws !== ws)
+        .filter((c) => c.ws !== ws && !c.silent)
         .map((c) => c.presence)
       const agents = [...(agentPresences.get(msg.canvasId)?.values() ?? [])]
       send(ws, {
@@ -1078,6 +1132,12 @@ wss.on('connection', (ws, upgradeReq) => {
         selfColor: presence.color,
         serverBuild: BUILD_ID,
       })
+      /* An admin looking at a canvas must not act on it. Announcing presence
+         would impersonate the owner in the room; maybePlay would have the
+         demo agent perform on an untouched signup canvas; the card kick would
+         start the resident agent working. All three are things the owner's
+         own visit is supposed to trigger, not a support session. */
+      if (silent) return
       broadcast(msg.canvasId, { type: 'presence:join', presence }, presence.clientId)
       demo.maybePlay(msg.canvasId) // first visit to a fresh signup canvas: the demo agent performs
       /* Start never-attempted cards. Failed/interrupted cards are excluded. */
@@ -1088,6 +1148,7 @@ wss.on('connection', (ws, upgradeReq) => {
     }
 
     if (!conn) return
+    if (conn.silent) return // view-as connections receive updates but never emit
     const { canvasId, presence } = conn
 
     switch (msg.type) {
@@ -1121,6 +1182,7 @@ wss.on('connection', (ws, upgradeReq) => {
     const conn = conns.get(ws)
     if (!conn) return
     conns.delete(ws)
+    if (conn.silent) return // never announced a join, so nothing to leave
     broadcast(conn.canvasId, { type: 'presence:leave', clientId: conn.presence.clientId })
   })
 })
