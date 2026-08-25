@@ -248,7 +248,7 @@ class Store {
 
   createFrame(
     canvasId: string,
-    input: { name: string; x?: number; y?: number; width?: number; height?: number; html?: string },
+    input: { name: string; x?: number; y?: number; width?: number; height?: number; html?: string; demo?: boolean },
     by: string,
   ): Frame | undefined {
     const c = this.canvases.get(canvasId)
@@ -275,6 +275,7 @@ class Store {
       updatedAt: now,
       updatedBy: by,
     }
+    if (input.demo) frame.demo = true
     c.frames.push(frame)
     c.updatedAt = now
     this.frameIndex.set(frame.id, canvasId)

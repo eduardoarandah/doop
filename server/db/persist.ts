@@ -231,6 +231,7 @@ async function writeFrame(f: Frame) {
     createdAt: f.createdAt,
     updatedAt: f.updatedAt,
     updatedBy: f.updatedBy,
+    demo: f.demo ?? null,
   }
   const { id, createdAt, ...set } = row
   await db.insert(t.frames).values(row).onConflictDoUpdate({ target: t.frames.id, set })
@@ -485,7 +486,7 @@ export async function hydrate(): Promise<Hydrated> {
     const c = byId.get(m.canvasId)
     if (c) (c.memberIds ??= []).push(m.userId)
   }
-  for (const f of frameRows) byId.get(f.canvasId)?.frames.push(f)
+  for (const f of frameRows) byId.get(f.canvasId)?.frames.push({ ...f, demo: f.demo ?? undefined })
   for (const c of canvases) c.frames.sort((a, b) => a.createdAt - b.createdAt)
   for (const r of referenceRows) {
     const c = byId.get(r.canvasId)

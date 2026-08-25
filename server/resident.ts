@@ -218,7 +218,11 @@ async function runAgent(canvasId: string, agentName: string, stalled: Set<string
     )
 
     const canvas = store.getCanvas(canvasId)
-    const frameList = (canvas?.frames ?? [])
+    /* demo frames (the Doop welcome show, seeded examples) are product
+       content, not user work — hidden so agents never mistake them for
+       the canvas's established style */
+    const visibleFrames = (canvas?.frames ?? []).filter((f) => !f.demo)
+    const frameList = visibleFrames
       .map(
         (f, index) =>
           `- Frame ${index + 1}: id=${f.id}, name="${f.name}", ${Math.round(f.width)}x${Math.round(f.height)} (last edit: ${f.updatedBy}, ${f.html.length} bytes${f.html.length > LARGE_HTML_CHARS ? '; large document — avoid a full read for visual-reference work' : ''})`,
@@ -294,7 +298,7 @@ async function runAgent(canvasId: string, agentName: string, stalled: Set<string
       sections.join('\n\n') +
       `\n\nFrames currently on the canvas:\n${frameList}` +
       referenceList +
-      `\n\nExecution strategy selected by the harness:\n${strategyFor(workText, canvas?.frames ?? [])}` +
+      `\n\nExecution strategy selected by the harness:\n${strategyFor(workText, visibleFrames)}` +
       (urls.length > 0
         ? `\n\nThe request references ${urls.join(', ')} — call view_website on each BEFORE designing (with save_reference: true, so the source lands on the canvas for everyone to compare against), and build from the live page's real content and structure.`
         : '') +

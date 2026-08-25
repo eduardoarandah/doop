@@ -14,6 +14,7 @@ export function seed() {
       y: 120,
       width: 720,
       height: 520,
+      demo: true,
       html: `<!doctype html><html><head><style>
   *{margin:0;box-sizing:border-box}
   body{font-family:Georgia,serif;background:#0F1E17;color:#F2EFE6;height:100vh;display:flex;flex-direction:column;justify-content:center;padding:56px;overflow:hidden}
@@ -44,6 +45,7 @@ export function seed() {
       y: 120,
       width: 420,
       height: 520,
+      demo: true,
       html: `<!doctype html><html><head><style>
   *{margin:0;box-sizing:border-box}
   body{font-family:'Helvetica Neue',Arial,sans-serif;background:#F5F3EE;height:100vh;display:grid;place-items:center}

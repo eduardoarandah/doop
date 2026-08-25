@@ -140,10 +140,12 @@ function frameSummary(f: {
   updatedAt: number
   updatedBy: string
   html: string
+  demo?: boolean
 }) {
   return {
     id: f.id,
     name: f.name,
+    ...(f.demo ? { demo: true } : {}),
     x: f.x,
     y: f.y,
     width: f.width,
@@ -204,7 +206,14 @@ export function buildMcpServer(owner?: string, ownerId?: string): McpServer {
     },
     /* '' matches no ownerId: a session without a user sees nothing */
     async () =>
-      text(store.listCanvases(ownerId ?? '').map((m) => ({ ...m, guidelinesCount: store.getGuidelines(m.id).length }))),
+      text(
+        store.listCanvases(ownerId ?? '').map((m) => ({
+          ...m,
+          /* count what get_canvas will actually return — demo frames are hidden from agents */
+          frameCount: store.getCanvas(m.id)?.frames.filter((f) => !f.demo).length ?? m.frameCount,
+          guidelinesCount: store.getGuidelines(m.id).length,
+        })),
+      ),
   )
 
   server.registerTool(
@@ -250,7 +259,10 @@ export function buildMcpServer(owner?: string, ownerId?: string): McpServer {
         text({
           id: c.id,
           name: c.name,
-          frames: c.frames.map(frameSummary),
+          /* demo frames (the Doop welcome show, seeded examples) are product
+             content, not user work — hidden so agents never mistake them for
+             the canvas's established style */
+          frames: c.frames.filter((f) => !f.demo).map(frameSummary),
           guidelines: docs.map((d) => ({
             name: d.name,
             title: actions.guidelineTitle(d),

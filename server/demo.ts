@@ -133,7 +133,7 @@ async function play(canvasId: string) {
   await sleep(700)
   const frame = actions.createFrame(
     canvasId,
-    { name: 'Welcome to Doop', x: 120, y: 120, width: 760, height: 560, html: '' },
+    { name: 'Welcome to Doop', x: 120, y: 120, width: 760, height: 560, html: '', demo: true },
     actor,
   )
   if (!frame) return

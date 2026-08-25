@@ -10,6 +10,9 @@ export interface Frame {
   createdAt: number
   updatedAt: number
   updatedBy: string
+  /** product-made onboarding/example content (welcome demo, seeded frames) —
+   *  not the user's work; agents must never read it as the canvas's style */
+  demo?: boolean
 }
 
 export interface CanvasMeta {

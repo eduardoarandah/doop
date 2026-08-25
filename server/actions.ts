@@ -880,7 +880,7 @@ export function appendFrameHtml(
 
 export function createFrame(
   canvasId: string,
-  input: { name: string; x?: number; y?: number; width?: number; height?: number; html?: string },
+  input: { name: string; x?: number; y?: number; width?: number; height?: number; html?: string; demo?: boolean },
   actor: Actor,
 ): Frame | undefined {
   if (input.html !== undefined) input = { ...input, html: repairEscapedHtml(input.html) }

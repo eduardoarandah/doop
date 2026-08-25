@@ -45,6 +45,8 @@ export const frames = pgTable(
     createdAt: bigint('created_at', { mode: 'number' }).notNull(),
     updatedAt: bigint('updated_at', { mode: 'number' }).notNull(),
     updatedBy: text('updated_by').notNull(),
+    /** product-made onboarding/example content; null = a real user frame */
+    demo: boolean('demo'),
   },
   (t) => [index('frames_canvas_idx').on(t.canvasId)],
 )
