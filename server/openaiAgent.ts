@@ -240,12 +240,21 @@ function fromResponse(body: ResponseBody): TurnResult {
 /* transports                                                       */
 /* ---------------------------------------------------------------- */
 
-/** Pull the final response object out of a Responses SSE stream. */
+/**
+ * Pull the final response out of a Responses SSE stream.
+ *
+ * The output items are accumulated from `response.output_item.done` rather
+ * than read off the terminal event: ChatGPT's Codex backend sends a
+ * `response.completed` that carries only bookkeeping (id, usage, end_turn)
+ * and no output array, so trusting that event alone yields an empty turn.
+ * api.openai.com does include the array, and it wins when present.
+ */
 async function readEventStream(res: Response): Promise<ResponseBody> {
   if (!res.body) throw new Error('OpenAI returned no response body')
   const reader = res.body.getReader()
   const decoder = new TextDecoder()
   let buffer = ''
+  const streamed: NonNullable<ResponseBody['output']> = []
   let final: ResponseBody | undefined
   let failure: string | undefined
   for (;;) {
@@ -259,20 +268,27 @@ async function readEventStream(res: Response): Promise<ResponseBody> {
       if (!line.startsWith('data:')) continue
       const payload = line.slice(5).trim()
       if (!payload || payload === '[DONE]') continue
-      let event: { type?: string; response?: ResponseBody; error?: { message?: string }; message?: string }
+      let event: {
+        type?: string
+        response?: ResponseBody
+        item?: NonNullable<ResponseBody['output']>[number]
+        error?: { message?: string }
+        message?: string
+      }
       try {
         event = JSON.parse(payload)
       } catch {
         continue
       }
-      if (event.type === 'response.completed' || event.type === 'response.incomplete') final = event.response
+      if (event.type === 'response.output_item.done' && event.item) streamed.push(event.item)
+      else if (event.type === 'response.completed' || event.type === 'response.incomplete') final = event.response
       else if (event.type === 'response.failed') failure = event.response?.error?.message || 'the response failed'
       else if (event.type === 'error') failure = event.error?.message || event.message || 'stream error'
     }
   }
   if (failure) throw new Error(failure)
   if (!final) throw new Error('OpenAI stream ended without a completed response')
-  return final
+  return final.output?.length ? final : { ...final, output: streamed }
 }
 
 async function failure(res: Response, label: string): Promise<Error> {
@@ -342,4 +358,4 @@ export function runOpenAiTurn(account: ModelAccount, req: TurnRequest): Promise<
 }
 
 /* exported for tests */
-export const _internal = { toInput, toTools, fromResponse, flattenToolResult }
+export const _internal = { toInput, toTools, fromResponse, flattenToolResult, readEventStream }

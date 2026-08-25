@@ -167,3 +167,63 @@ describe('ChatGPT redirect parsing', () => {
     expect(() => parseAuthCode('http://localhost:1455/auth/callback')).toThrow(/no \?code=/)
   })
 })
+
+describe('Codex-backend SSE stream', () => {
+  const sse = (lines: string[]) =>
+    new Response(
+      new ReadableStream({
+        start(controller) {
+          for (const l of lines) controller.enqueue(new TextEncoder().encode(l))
+          controller.close()
+        },
+      }),
+    )
+
+  /* The Codex backend's response.completed carries only bookkeeping — reading
+     output off it alone produced an empty turn on every real run. */
+  it('accumulates output items when the completed event carries no output', async () => {
+    const body = await _internal.readEventStream(
+      sse([
+        'data: {"type":"response.created","response":{"id":"resp_1"}}\n',
+        'data: {"type":"response.output_item.done","item":{"type":"reasoning","id":"rs_1"}}\n',
+        'data: {"type":"response.output_item.done","item":{"type":"function_call","call_id":"call_1","name":"set_status","arguments":"{\\"status\\":\\"Working\\"}"}}\n',
+        'data: {"type":"response.completed","response":{"id":"resp_1","status":"completed"}}\n',
+        'data: [DONE]\n',
+      ]),
+    )
+    const result = fromResponse(body)
+    expect(result.stop_reason).toBe('tool_use')
+    expect(result.content).toEqual([
+      { type: 'tool_use', id: 'call_1', name: 'set_status', input: { status: 'Working' } },
+    ])
+  })
+
+  it('prefers the completed event own output when it has one (api.openai.com)', async () => {
+    const body = await _internal.readEventStream(
+      sse([
+        'data: {"type":"response.output_item.done","item":{"type":"message","content":[{"type":"output_text","text":"streamed"}]}}\n',
+        'data: {"type":"response.completed","response":{"status":"completed","output":[{"type":"message","content":[{"type":"output_text","text":"authoritative"}]}]}}\n',
+      ]),
+    )
+    expect(fromResponse(body).content).toEqual([{ type: 'text', text: 'authoritative' }])
+  })
+
+  it('surfaces a failed stream instead of reporting an empty turn', async () => {
+    await expect(
+      _internal.readEventStream(
+        sse(['data: {"type":"response.failed","response":{"error":{"message":"model overloaded"}}}\n']),
+      ),
+    ).rejects.toThrow(/model overloaded/)
+  })
+
+  it('handles events split across chunk boundaries', async () => {
+    const body = await _internal.readEventStream(
+      sse([
+        'data: {"type":"response.output_item.done","item":{"type":"mess',
+        'age","content":[{"type":"output_text","text":"split"}]}}\n',
+        'data: {"type":"response.completed","response":{"status":"completed"}}\n',
+      ]),
+    )
+    expect(fromResponse(body).content).toEqual([{ type: 'text', text: 'split' }])
+  })
+})
