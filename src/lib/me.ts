@@ -42,11 +42,22 @@ export function useMe(userId: string | undefined): Me | null {
   useEffect(() => {
     if (!userId) return
     let live = true
-    loadMe(userId)
-      .then((m) => live && setMe(m))
-      .catch(() => {})
+    let timer: ReturnType<typeof setTimeout>
+    /* loadMe forgets failures so "the next call" retries — but with a stable
+       userId this effect never runs again, so a transient /api/me failure
+       would otherwise leave `me` null for the whole session (and blank any
+       screen gated on it). Keep calling until it answers. */
+    const attempt = () => {
+      loadMe(userId)
+        .then((m) => live && setMe(m))
+        .catch(() => {
+          if (live) timer = setTimeout(attempt, 3000)
+        })
+    }
+    attempt()
     return () => {
       live = false
+      clearTimeout(timer)
     }
   }, [userId])
   /* never hand back a `me` belonging to a previous identity */

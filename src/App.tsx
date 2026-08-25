@@ -28,6 +28,20 @@ export function App() {
     return () => window.removeEventListener('popstate', onPop)
   }, [])
 
+  /* Reaching /admin mid "view as" — usually the Back button, since /admin
+     stays in history when impersonation starts — can only mean "return to
+     being the admin": the borrowed session has no admin access, so rendering
+     the page would show its not-found screen. End the impersonation and
+     arrive as the admin instead. */
+  const returningToAdmin = !!me?.impersonating && path.startsWith('/admin')
+  useEffect(() => {
+    if (!returningToAdmin) return
+    adminApi
+      .stopImpersonating()
+      .then(() => location.assign('/admin'))
+      .catch(() => location.assign('/'))
+  }, [returningToAdmin])
+
   /* The session is the auth boundary: this covers both successful login and
      restoring an existing session after a page refresh. */
   useEffect(() => {
@@ -73,6 +87,12 @@ export function App() {
     if (path.startsWith('/auth') || path.startsWith('/c/') || oauthResume) return <AuthPage />
     return <Landing />
   }
+
+  /* /admin waits for /api/me: before it answers we can't tell an admin from
+     a borrowed "view as" session, and rendering Admin in the latter flashes
+     its not-found screen. Also blank while the effect above swaps the
+     session back and reloads. */
+  if (path.startsWith('/admin') && (!me || returningToAdmin)) return <div className="auth-page" />
 
   const canvasMatch = path.match(/^\/c\/([^/]+)/)
   const page = canvasMatch ? (
