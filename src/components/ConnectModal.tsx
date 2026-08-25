@@ -5,7 +5,9 @@ import { roleByAgentName } from '../../shared/agents'
 /* This modal is about MCP agents only. Running the built-in Doop Agent on your
    own ChatGPT subscription is an account-level setting and lives in /settings. */
 
-export function ConnectModal({ canvasId, onClose }: { canvasId: string; onClose: () => void }) {
+/** `canvasId` is optional: opened from the home dashboard there is no canvas to
+ *  suggest a prompt for, and no presence connection to watch for an arrival. */
+export function ConnectModal({ canvasId, onClose }: { canvasId?: string; onClose: () => void }) {
   return (
     <div className="modal-backdrop" onClick={onClose}>
       <div className="modal" onClick={(e) => e.stopPropagation()}>
@@ -20,7 +22,7 @@ export function ConnectModal({ canvasId, onClose }: { canvasId: string; onClose:
         <ConnectBody canvasId={canvasId} />
 
         <div className="close-row">
-          <AgentArrival />
+          {canvasId && <AgentArrival />}
           <button className="btn" onClick={onClose}>
             Done
           </button>
@@ -32,7 +34,7 @@ export function ConnectModal({ canvasId, onClose }: { canvasId: string; onClose:
 
 /** The connect instructions, shared by the connect modal and the free-tier
  *  wall: endpoint, per-client commands, and a starter prompt. */
-export function ConnectBody({ canvasId }: { canvasId: string }) {
+export function ConnectBody({ canvasId }: { canvasId?: string }) {
   const mcpUrl = `${location.origin}/mcp`
 
   const claudeCmd = `claude mcp add --transport http doop "${mcpUrl}"`
@@ -41,7 +43,9 @@ export function ConnectBody({ canvasId }: { canvasId: string }) {
   /* Deliberately thin: the MCP server ships its own INSTRUCTIONS on connect and the
      rest lives behind get_guide. The only thing this prompt knows that they don't is
      which canvas the human is looking at. */
-  const prompt = `Work on Doop canvas ${canvasId}. Start with get_guide({ topic: "doop-instructions" }) and follow it.`
+  const prompt = canvasId
+    ? `Work on Doop canvas ${canvasId}. Start with get_guide({ topic: "doop-instructions" }) and follow it.`
+    : ''
 
   return (
     <>
@@ -54,8 +58,12 @@ export function ConnectBody({ canvasId }: { canvasId: string }) {
       <h3>Any other MCP client (streamable HTTP)</h3>
       <CodeBlock text={jsonConfig} />
 
-      <h3>Suggested prompt for the agent</h3>
-      <CodeBlock text={prompt} />
+      {prompt && (
+        <>
+          <h3>Suggested prompt for the agent</h3>
+          <CodeBlock text={prompt} />
+        </>
+      )}
     </>
   )
 }

@@ -18,7 +18,22 @@ export function agentBrand(name: string): { bg: string; fg: string } | undefined
 export function AgentIcon({ name, size = 13, color }: { name: string; size?: number; color?: string }) {
   const n = name.toLowerCase()
   const path = n.includes('claude') ? CLAUDE_PATH : n.includes('codex') || n.includes('gpt') ? OPENAI_PATH : null
-  if (!path) return <span className="agent-glyph">✦</span>
+  /* The generic mark is drawn, not typed: the ✦ character falls back to a
+     different font on every platform and reads as a slanted sparkle rather
+     than an upright star. */
+  if (!path)
+    return (
+      <svg
+        className="agent-glyph"
+        width={size}
+        height={size}
+        viewBox="0 0 24 24"
+        fill={color ?? 'currentColor'}
+        aria-hidden
+      >
+        <path d="M12 1.6l2.4 7.5 7.5 2.4-7.5 2.4-2.4 7.5-2.4-7.5L2.1 11.5l7.5-2.4z" />
+      </svg>
+    )
   const fill = color ?? (n.includes('claude') ? '#D97757' : 'currentColor')
   return (
     <svg className="agent-glyph" width={size} height={size} viewBox="0 0 24 24" fill={fill} aria-hidden>
