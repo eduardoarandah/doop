@@ -32,6 +32,18 @@ const ADMIN_EMAILS = (process.env.ADMIN_EMAILS || '')
   .filter(Boolean)
 
 /**
+ * Whether an unverified account may sign in. Set REQUIRE_EMAIL_VERIFICATION
+ * to "false" to let people use doop the moment they sign up — fewer people
+ * fall out of the funnel at a "check your inbox" screen, at the cost of
+ * letting anyone hold an address they don't own.
+ *
+ * The verification email still goes out either way: it becomes optional
+ * rather than absent, which keeps the ADMIN_EMAILS path below intact. An
+ * admin-to-be clicks the link once; nobody else has to.
+ */
+const REQUIRE_VERIFICATION = mailerConfigured && process.env.REQUIRE_EMAIL_VERIFICATION !== 'false'
+
+/**
  * An email address only identifies someone once they have PROVEN they own it.
  * Without SMTP nothing can ever be verified and signup is open (see
  * requireEmailVerification below), so an unguarded ADMIN_EMAILS would hand
@@ -75,7 +87,13 @@ export async function syncAdmins(): Promise<void> {
         or(isNull(authSchema.user.role), ne(authSchema.user.role, 'admin')),
       ),
     )
-  for (const u of candidates) if (mayPromote(u)) await promote(u.id, u.email)
+  for (const u of candidates) {
+    if (mayPromote(u)) await promote(u.id, u.email)
+    /* Say why, rather than leaving an operator staring at a missing Admin
+       button. Common once verification is optional: the account is fine,
+       it just never clicked the link. */
+    else console.warn(`⚠ ${u.email} is in ADMIN_EMAILS but its email is unverified — not promoted`)
+  }
 }
 
 function buildAuth() {
@@ -102,10 +120,11 @@ function buildAuth() {
     database: drizzleAdapter(db, { provider: 'pg', schema: authSchema }),
     /* Verification is enforced only when an SMTP mailer is configured —
        without one (dev, tiny self-hosts) signup stays open and every email
-       is printed to the server log instead, links included. */
+       is printed to the server log instead, links included — and only when
+       REQUIRE_EMAIL_VERIFICATION hasn't been turned off (see above). */
     emailAndPassword: {
       enabled: true,
-      requireEmailVerification: mailerConfigured,
+      requireEmailVerification: REQUIRE_VERIFICATION,
       sendResetPassword: async ({ user, url }) => {
         await sendMail({
           to: user.email,

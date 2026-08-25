@@ -150,6 +150,33 @@ describe('admin surface', () => {
     }
   }, 70_000)
 
+  it('lets unverified accounts in when verification is optional, but still will not promote them', async () => {
+    /* REQUIRE_EMAIL_VERIFICATION=false trades proof-of-address for signup
+       conversion. The admin role must not be part of that trade: signing in
+       is opened up, promotion still demands a verified address. */
+    const open = await startServer(PORT + 3, {
+      ADMIN_EMAILS: 'boss@test.dev',
+      REQUIRE_EMAIL_VERIFICATION: 'false',
+      SMTP_HOST: 'smtp.invalid.test', // mailer "configured", so verification is possible
+      NODE_ENV: 'production',
+      BETTER_AUTH_SECRET: 'test-secret-not-for-real-use',
+      BETTER_AUTH_URL: `http://localhost:${PORT + 3}`,
+    })
+    try {
+      const eager = new Client(open)
+      await eager.signUp('boss@test.dev', 'Unverified Boss')
+      /* the point of the flag: usable immediately, no inbox round trip */
+      const me = await (await eager.get('/api/me')).json()
+      expect(me.email).toBe('boss@test.dev')
+      expect((await eager.get('/api/canvases')).status).toBe(200)
+      /* ...but the address is still unproven, so no admin */
+      expect(me.admin).toBe(false)
+      expect((await eager.get('/api/admin/canvases')).status).toBe(404)
+    } finally {
+      open.stop()
+    }
+  }, 70_000)
+
   it('promotes accounts that already existed when ADMIN_EMAILS gained them', async () => {
     /* the real-world order: someone signs up first, and is named an admin
        later. Reboot the same database with a wider ADMIN_EMAILS. */
