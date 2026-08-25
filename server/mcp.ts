@@ -9,6 +9,7 @@ import { canAccessCanvas } from './access.ts'
 import { auth, getUserName, PUBLIC_ORIGIN } from './auth.ts'
 import { renderFrame } from './screenshot.ts'
 import { DOOP_GUIDE, GUIDE_TOPICS } from './guide.ts'
+import { ESCAPED_HTML_NOTE, looksEscapedHtml } from './escapedHtml.ts'
 import * as assets from './assets.ts'
 import * as imageSearch from './imageSearch.ts'
 import { viewWebsite, saveWebsiteReferenceFrame } from './website.ts'
@@ -59,6 +60,15 @@ function withStatusNudge<T extends { content: { type: 'text' | 'image'; [k: stri
     type: 'text' as const,
     text: 'You have not announced what you are working on. Call set_status with a one-line, present-tense summary (e.g. "Designing a pricing page, dark editorial style") — it shows live next to your name and builds your task history in the panel. Update it when your focus shifts; clear it with "" when done.',
   })
+  return result
+}
+
+/** Tells an agent its markup arrived escaped — actions.ts already decoded it. */
+function withEscapeNote<T extends { content: { type: 'text' | 'image'; [k: string]: unknown }[] }>(
+  result: T,
+  sent: string,
+): T {
+  if (looksEscapedHtml(sent)) result.content.push({ type: 'text' as const, text: ESCAPED_HTML_NOTE })
   return result
 }
 
@@ -507,10 +517,12 @@ export function buildMcpServer(owner?: string, ownerId?: string): McpServer {
       if (!canvasFor(canvas_id)) return noCanvas(canvas_id)
       const frame = actions.createFrame(canvas_id, { name, html, x, y, width, height }, actorFrom(agent_name))
       if (!frame) return noCanvas(canvas_id)
-      const result =
+      const result = withEscapeNote(
         frame.html.length > 0
           ? textWithNudge({ ok: true, frame: frameSummary(frame) }, REVIEW_NUDGE)
-          : text({ ok: true, frame: frameSummary(frame) })
+          : text({ ok: true, frame: frameSummary(frame) }),
+        html,
+      )
       return withGuidelinesNudge(
         withStatusNudge(withFeedback(result, canvas_id, actorFrom(agent_name)), canvas_id, actorFrom(agent_name)),
         canvas_id,
@@ -551,7 +563,7 @@ export function buildMcpServer(owner?: string, ownerId?: string): McpServer {
       return withGuidelinesNudge(
         withStatusNudge(
           withFeedback(
-            textWithNudge({ ok: true, frame: frameSummary(frame) }, REVIEW_NUDGE),
+            withEscapeNote(textWithNudge({ ok: true, frame: frameSummary(frame) }, REVIEW_NUDGE), html),
             frame.canvasId,
             actorFrom(agent_name),
           ),
@@ -911,7 +923,9 @@ export function buildMcpServer(owner?: string, ownerId?: string): McpServer {
         'Stream a design into a frame chunk by chunk, so viewers watch it build up live — prefer this over set_frame_html when creating or reworking a whole design. Send the HTML in order, in chunks of roughly 200–600 characters (e.g. head/styles first, then section by section). Set start=true on the FIRST chunk (replaces any existing content and shows a live "designing…" badge) and done=true on the LAST chunk. Partial HTML renders progressively, so structure chunks to end at reasonable boundaries when you can.',
       inputSchema: {
         frame_id: z.string(),
-        html_chunk: z.string().describe('The next piece of HTML, appended to what has been sent so far.'),
+        html_chunk: z
+          .string()
+          .describe('The next piece of HTML, appended to what has been sent so far. Raw markup — never escaped.'),
         start: z.boolean().optional().describe('true on the first chunk — clears the frame and starts the live stream'),
         done: z.boolean().optional().describe('true on the final chunk — ends the live stream'),
         agent_name: agentName,
@@ -927,8 +941,11 @@ export function buildMcpServer(owner?: string, ownerId?: string): McpServer {
             `Stream complete. ${REVIEW_NUDGE}`,
           )
         : text({ ok: true, streaming: true, htmlBytes: frame.html.length })
-      /* nudge only on the first chunk — mid-stream results should stay lean */
-      const nudged = start ? withGuidelinesNudge(result, frame.canvasId, actorFrom(agent_name)) : result
+      /* nudge only on the first chunk — mid-stream results should stay lean.
+         The escape check rides along: the opening chunk decides the stream. */
+      const nudged = start
+        ? withGuidelinesNudge(withEscapeNote(result, html_chunk), frame.canvasId, actorFrom(agent_name))
+        : result
       return withStatusNudge(
         withFeedback(nudged, frame.canvasId, actorFrom(agent_name)),
         frame.canvasId,

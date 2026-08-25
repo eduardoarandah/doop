@@ -3,6 +3,7 @@ import { store } from './store.ts'
 import * as persist from './db/persist.ts'
 import { colorFor } from '../shared/types.ts'
 import { DEFAULT_ROLE_ID, mentionedRole, normalizePipeline, roleByAgentName, roleName } from '../shared/agents.ts'
+import { decodeEscapedHtml, looksEscapedHtml, repairEscapedHtml } from './escapedHtml.ts'
 import type {
   Actor,
   ActivityItem,
@@ -703,6 +704,8 @@ interface RevealState {
   isStream: boolean
   /** the stream got its final chunk; finish once the reveal catches up */
   pendingDone: boolean
+  /** the opening chunk was HTML-escaped: decode every chunk of this stream */
+  escaped: boolean
   lastActivity: number
 }
 
@@ -735,7 +738,7 @@ function commonPrefixLen(a: string, b: string): number {
 }
 
 function startReveal(frame: Frame, actor: Actor, shown: number, isStream: boolean) {
-  reveals.set(frame.id, { actor, shown, isStream, pendingDone: false, lastActivity: Date.now() })
+  reveals.set(frame.id, { actor, shown, isStream, pendingDone: false, escaped: false, lastActivity: Date.now() })
   broadcast(frame.canvasId, { type: 'frame:streaming', frameId: frame.id, active: true, actor })
 }
 
@@ -787,7 +790,12 @@ export function appendFrameHtml(
   if (!before) return undefined
 
   const starting = opts.start || !reveals.has(frameId)
-  const html = opts.start ? chunk : before.html + chunk
+  /* an agent that escapes its opening chunk escapes the whole stream, so latch
+     the verdict there: a chunk mid-design can hold a legitimate `&lt;` (a code
+     sample) and must never be sniffed on its own */
+  const escaped = starting ? looksEscapedHtml(chunk) : (reveals.get(frameId)?.escaped ?? false)
+  const piece = escaped ? decodeEscapedHtml(chunk) : chunk
+  const html = opts.start ? piece : before.html + piece
   const frame = store.updateFrame(frameId, { html }, actor.name)!
 
   if (starting) {
@@ -798,6 +806,7 @@ export function appendFrameHtml(
   }
   const r = reveals.get(frameId)!
   r.lastActivity = Date.now()
+  r.escaped = escaped
   if (opts.done) r.pendingDone = true
 
   touch(frame.canvasId, actor, frameId)
@@ -811,6 +820,7 @@ export function createFrame(
   input: { name: string; x?: number; y?: number; width?: number; height?: number; html?: string },
   actor: Actor,
 ): Frame | undefined {
+  if (input.html !== undefined) input = { ...input, html: repairEscapedHtml(input.html) }
   const frame = store.createFrame(canvasId, input, actor.name)
   if (!frame) return undefined
   if (actor.kind === 'agent' && frame.html.length > 0) {
@@ -833,6 +843,7 @@ export function updateFrame(
 ): Frame | undefined {
   const before = store.getFrame(frameId)
   if (!before) return undefined
+  if (patch.html !== undefined) patch = { ...patch, html: repairEscapedHtml(patch.html) }
   const prevName = before.name
   const prevHtml = before.html
   const frame = store.updateFrame(frameId, patch, actor.name)!
