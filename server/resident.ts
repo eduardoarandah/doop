@@ -59,14 +59,21 @@ async function sweep(canvasId: string) {
      without this a requester who cannot pay would be re-picked forever and
      block everyone queued behind them. */
   const stalled = new Set<string>()
+  /* Agents whose whole queue is stalled. Skipped rather than breaking the
+     sweep, so one unpayable queue cannot hide another agent's runnable work. */
+  const idle = new Set<string>()
   try {
     for (let i = 0; i < MAX_SWEEP_RUNS; i++) {
-      const next = actions.pendingWorkAgents(canvasId)[0]
+      const next = actions.pendingWorkAgents(canvasId).find((name) => !idle.has(name))
       if (!next) break
       const outcome = await runAgent(canvasId, next, stalled)
-      /* 'idle' means nothing left this sweep can claim — going round again
-         would spin on the same work forever */
-      if (outcome === 'idle') break
+      if (outcome === 'idle') {
+        idle.add(next)
+        continue
+      }
+      /* a completed run can hand a card down its pipeline, which may put
+         payable work in front of an agent that had nothing a moment ago */
+      idle.clear()
     }
   } finally {
     running.delete(canvasId)
