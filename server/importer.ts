@@ -528,36 +528,42 @@ export async function importPage(rawUrl: string, options: { includePreview?: boo
       await assertPublicNetworkUrl(page.url())
     }
     /* walk the page before capturing: scroll-reveal animations and lazy
-       images only materialize once their elements have been in view */
-    await page.evaluate(async () => {
-      /* the window isn't always the scroller — app-shell pages scroll an
+       images only materialize once their elements have been in view. Skip it
+       for Context.dev captures: scripts are disabled there, which makes
+       Chromium load loading="lazy" images eagerly, run no scroll-reveal
+       code — and never fire the timers this walk awaits, so the evaluate
+       promise would hang until Chromium collects it and the import fails. */
+    if (!contextCapture) {
+      await page.evaluate(async () => {
+        /* the window isn't always the scroller — app-shell pages scroll an
          overflow container. Walk the tallest scrollables too. */
-      const scrollables: (Element | null)[] = [document.scrollingElement]
-      for (const el of Array.from(document.querySelectorAll('body, body *')).slice(0, 4000)) {
-        if (el.scrollHeight > el.clientHeight + 300 && el.clientHeight > 200) {
-          const o = getComputedStyle(el).overflowY
-          if (o === 'auto' || o === 'scroll') scrollables.push(el)
+        const scrollables: (Element | null)[] = [document.scrollingElement]
+        for (const el of Array.from(document.querySelectorAll('body, body *')).slice(0, 4000)) {
+          if (el.scrollHeight > el.clientHeight + 300 && el.clientHeight > 200) {
+            const o = getComputedStyle(el).overflowY
+            if (o === 'auto' || o === 'scroll') scrollables.push(el)
+          }
         }
-      }
-      const targets = scrollables
-        .filter((el): el is Element => !!el)
-        .sort((a, b) => b.scrollHeight - a.scrollHeight)
-        .slice(0, 3)
-      for (const el of targets) {
-        let y = 0
-        for (let i = 0; i < 40; i++) {
-          y += 700
-          el.scrollTop = y
-          window.scrollTo(0, y)
-          await new Promise((r) => setTimeout(r, 120))
-          if (y >= el.scrollHeight) break
+        const targets = scrollables
+          .filter((el): el is Element => !!el)
+          .sort((a, b) => b.scrollHeight - a.scrollHeight)
+          .slice(0, 3)
+        for (const el of targets) {
+          let y = 0
+          for (let i = 0; i < 40; i++) {
+            y += 700
+            el.scrollTop = y
+            window.scrollTo(0, y)
+            await new Promise((r) => setTimeout(r, 120))
+            if (y >= el.scrollHeight) break
+          }
+          el.scrollTop = 0
         }
-        el.scrollTop = 0
-      }
-      window.scrollTo(0, 0)
-      await new Promise((r) => setTimeout(r, 400))
-    })
-    await new Promise((r) => setTimeout(r, 600)) // late layout/lazy paint
+        window.scrollTo(0, 0)
+        await new Promise((r) => setTimeout(r, 400))
+      })
+      await new Promise((r) => setTimeout(r, 600)) // late layout/lazy paint
+    }
 
     const snap = await page.evaluate((maxHeight: number) => {
       for (const el of document.querySelectorAll(

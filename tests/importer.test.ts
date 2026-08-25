@@ -39,12 +39,16 @@ interface PageStubOptions {
   preview?: { description: string; text: string; pageHeight: number; hasVisualContent?: boolean }
   screenshot?: Buffer
   snapshot?: { baseUrl?: string; sheets: string[]; title: string; height: number; html: string }
+  /** Context.dev captures render with scripts disabled, so importPage skips
+   *  the scroll-walk evaluate — the stub's call sequence must match. */
+  contextPath?: boolean
 }
 
 function stubPage(options: PageStubOptions = {}) {
   const finalUrl = options.finalUrl ?? 'https://example.com/final'
   const mainFrame = {}
-  const evaluate = vi.fn().mockResolvedValueOnce(undefined)
+  const evaluate = vi.fn()
+  if (!options.contextPath) evaluate.mockResolvedValueOnce(undefined)
   evaluate.mockResolvedValueOnce(
     options.snapshot ?? {
       sheets: [],
@@ -197,6 +201,7 @@ describe('webpage capture', () => {
     })
     const page = stubPage({
       finalUrl: 'about:blank',
+      contextPath: true,
       snapshot: {
         baseUrl: 'https://www.example.com/assets/',
         sheets: [],
@@ -242,6 +247,7 @@ describe('webpage capture', () => {
     )
     const page = stubPage({
       finalUrl: 'about:blank',
+      contextPath: true,
       snapshot: {
         sheets: ['https://example.com/app.css'],
         title: 'Context title',
@@ -276,6 +282,7 @@ describe('webpage capture', () => {
       )
     const page = stubPage({
       finalUrl: 'about:blank',
+      contextPath: true,
       snapshot: {
         sheets: ['https://example.com/reset.css', 'https://example.com/app.css'],
         title: 'Context title',
@@ -333,6 +340,7 @@ describe('webpage capture', () => {
     const screenshot = Buffer.from('local-preview')
     const page = stubPage({
       finalUrl: 'about:blank',
+      contextPath: true,
       preview: { description: '', text: 'Rendered Context page', pageHeight: 700 },
       screenshot,
     })
