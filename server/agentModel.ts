@@ -1,5 +1,5 @@
 import Anthropic from '@anthropic-ai/sdk'
-import { firstConnected, withFreshToken } from './modelAccounts.ts'
+import { getAccount, withFreshToken } from './modelAccounts.ts'
 import type { ModelAccount } from './modelAccounts.ts'
 import { modelFor, ModelAuthError, runOpenAiTurn } from './openaiAgent.ts'
 import type { StopReason, TurnBlock } from './openaiAgent.ts'
@@ -12,9 +12,10 @@ import type { StopReason, TurnBlock } from './openaiAgent.ts'
  * ChatGPT subscription or their own OpenAI key — their runs move onto it, and
  * the free-task meter stops applying to them entirely.
  *
- * A run is attributed to the humans whose cards, comments and feedback it
- * picked up, so the person who asked for the work is the person whose
- * subscription runs it.
+ * A run bills exactly ONE person: the requester behind the work it claims. The
+ * queue is worked one requester at a time rather than sweeping several people's
+ * cards into a single call, so nobody's subscription ever pays for someone
+ * else's request.
  */
 
 export type Provider = 'anthropic' | 'chatgpt' | 'openai-key'
@@ -111,21 +112,22 @@ function openaiModel(account: ModelAccount): AgentModel {
 }
 
 /**
- * Pick the model for one run. `userIds` are the humans whose work the run
- * claimed, most relevant first. Returns null when nothing can run it — no
- * server key and nobody connected an account of their own.
+ * Pick the model for one run, billed to exactly one person: `payerId` is the
+ * human whose work the run is about to claim. Returns null when nothing can
+ * run it — they have no account of their own and there is no server key.
  *
  * A connected account wins outright: someone who has just linked their ChatGPT
  * subscription expects the very next task to run on it, and the free tier is a
  * trial to get them here, not a balance to spend down first. It also means
  * connecting stops costing us anything from that moment on.
  */
-export async function pickModel(userIds: (string | undefined)[]): Promise<AgentModel | null> {
-  const candidates = [...new Set(userIds.filter((id): id is string => !!id))]
-  const account = await firstConnected(candidates).catch((err) => {
-    console.error('[doop-agent] could not read connected model accounts', err)
-    return null
-  })
+export async function pickModel(payerId?: string): Promise<AgentModel | null> {
+  const account = payerId
+    ? await getAccount(payerId).catch((err) => {
+        console.error('[doop-agent] could not read the connected model account', err)
+        return null
+      })
+    : null
   if (account) return openaiModel(account)
   const client = anthropicClient()
   return client ? anthropicModel(client) : null

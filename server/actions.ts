@@ -184,14 +184,27 @@ export function pendingWorkAgents(canvasId: string): string[] {
   return names
 }
 
-/** Account ids of the humans whose work this agent is about to claim, newest
- *  request last. Read-only on purpose: the harness picks a model credential
- *  from these before it claims anything. */
-export function pendingWorkUserIds(canvasId: string, agentName: string): string[] {
-  const ids: string[] = []
+/**
+ * Who pays for the next run: the account behind the OLDEST piece of work this
+ * agent can claim. A run bills exactly one person, so the queue is worked one
+ * requester at a time rather than sweeping several people's work into a single
+ * model call on whichever account happened to be found first.
+ *
+ * Returns '' when the oldest item predates per-user attribution (the caller
+ * falls back to the canvas owner), and undefined when nothing is claimable.
+ * `skip` holds payers already found to have no usable model this sweep, so one
+ * stalled requester never blocks everyone behind them.
+ */
+export function nextWorkPayer(canvasId: string, agentName: string, skip?: ReadonlySet<string>): string | undefined {
+  let oldest: { at: number; payer: string } | undefined
+  const consider = (at: number, userId: string | undefined) => {
+    const payer = userId ?? ''
+    if (skip?.has(payer)) return
+    if (!oldest || at < oldest.at) oldest = { at, payer }
+  }
   for (const card of taskLog.get(canvasId) ?? []) {
     if (card.queuedBy && !card.agentName && !card.failedAt && !card.endedAt && stageAgent(card) === agentName) {
-      if (card.queuedByUserId) ids.push(card.queuedByUserId)
+      consider(card.startedAt, card.queuedByUserId)
     }
   }
   for (const c of commentLog.get(canvasId) ?? []) {
@@ -200,18 +213,17 @@ export function pendingWorkUserIds(canvasId: string, agentName: string): string[
       !c.claimedBy &&
       !c.failedAt &&
       !c.resolvedAt &&
-      (c.targetAgent ?? roleName(DEFAULT_ROLE_ID)) === agentName &&
-      c.fromUserId
+      (c.targetAgent ?? roleName(DEFAULT_ROLE_ID)) === agentName
     ) {
-      ids.push(c.fromUserId)
+      consider(c.at, c.fromUserId)
     }
   }
   for (const f of feedbackLog.get(canvasId) ?? []) {
-    if (!f.deliveredAt && !f.failedAt && (!f.targetAgent || f.targetAgent === agentName) && f.fromUserId) {
-      ids.push(f.fromUserId)
+    if (!f.deliveredAt && !f.failedAt && (!f.targetAgent || f.targetAgent === agentName)) {
+      consider(f.at, f.fromUserId)
     }
   }
-  return [...new Set(ids)]
+  return oldest?.payer
 }
 
 /* ------------------------------------------------------------------ */
@@ -334,9 +346,13 @@ export function addTaskFeedback(
 /** Open feedback this agent may take: everything addressed to it, plus
  *  untargeted feedback — that part stays a canvas-level queue where the first
  *  identified agent call wins. */
-export function takeFeedbackFor(canvasId: string, agentName: string): TaskFeedback[] {
+export function takeFeedbackFor(canvasId: string, agentName: string, payer?: string): TaskFeedback[] {
   const pending = (feedbackLog.get(canvasId) ?? []).filter(
-    (f) => !f.deliveredAt && !f.failedAt && (!f.targetAgent || f.targetAgent === agentName),
+    (f) =>
+      !f.deliveredAt &&
+      !f.failedAt &&
+      (!f.targetAgent || f.targetAgent === agentName) &&
+      (payer === undefined || (f.fromUserId ?? '') === payer),
   )
   for (const f of pending) {
     f.deliveredAt = Date.now()
@@ -466,14 +482,15 @@ export function addElementComment(
 }
 
 /** Open comments @mentioning this agent, claimed by it. */
-export function takeAgentCommentsFor(canvasId: string, agentName: string): ElementComment[] {
+export function takeAgentCommentsFor(canvasId: string, agentName: string, payer?: string): ElementComment[] {
   const pending = (commentLog.get(canvasId) ?? []).filter(
     (c) =>
       c.forAgent &&
       !c.claimedBy &&
       !c.failedAt &&
       !c.resolvedAt &&
-      (c.targetAgent ?? roleName(DEFAULT_ROLE_ID)) === agentName,
+      (c.targetAgent ?? roleName(DEFAULT_ROLE_ID)) === agentName &&
+      (payer === undefined || (c.fromUserId ?? '') === payer),
   )
   for (const c of pending) {
     c.claimedBy = agentName
@@ -660,9 +677,15 @@ export function addQueuedCard(
 
 /** Cards waiting on THIS agent's stage, claimed by it. A card at another
  *  stage is invisible here — that is what keeps a pipeline in order. */
-export function takeQueuedCardsFor(canvasId: string, agentName: string): AgentTask[] {
+export function takeQueuedCardsFor(canvasId: string, agentName: string, payer?: string): AgentTask[] {
   const pending = (taskLog.get(canvasId) ?? []).filter(
-    (t) => t.queuedBy && !t.agentName && !t.failedAt && !t.endedAt && stageAgent(t) === agentName,
+    (t) =>
+      t.queuedBy &&
+      !t.agentName &&
+      !t.failedAt &&
+      !t.endedAt &&
+      stageAgent(t) === agentName &&
+      (payer === undefined || (t.queuedByUserId ?? '') === payer),
   )
   for (const c of pending) {
     c.agentName = agentName

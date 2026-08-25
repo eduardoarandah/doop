@@ -125,15 +125,6 @@ export async function setAccountModel(userId: string, model: string): Promise<Ac
   return getStatus(userId)
 }
 
-/** Which of these users has a model account, in the order given. */
-export async function firstConnected(userIds: string[]): Promise<ModelAccount | null> {
-  for (const userId of userIds) {
-    const account = await getAccount(userId)
-    if (account) return account
-  }
-  return null
-}
-
 async function save(account: Omit<ModelAccount, 'connectedAt'>): Promise<void> {
   const now = Date.now()
   const row = {
@@ -172,6 +163,29 @@ async function save(account: Omit<ModelAccount, 'connectedAt'>): Promise<void> {
 
 export async function disconnect(userId: string): Promise<void> {
   await db.delete(modelAccounts).where(eq(modelAccounts.userId, userId))
+}
+
+/**
+ * Write ONLY the refreshed token columns, and only if the row still exists.
+ * A full upsert here would race the user: disconnecting mid-refresh would see
+ * the row re-created, and changing the model mid-refresh would see it reverted
+ * to whatever this refresh started with.
+ */
+async function saveRefreshedTokens(
+  userId: string,
+  tokens: { accessToken: string; refreshToken: string; expiresAt: number; accountId?: string; plan?: string },
+): Promise<void> {
+  await db
+    .update(modelAccounts)
+    .set({
+      accessToken: tokens.accessToken,
+      refreshToken: tokens.refreshToken,
+      expiresAt: tokens.expiresAt,
+      ...(tokens.accountId ? { accountId: tokens.accountId } : {}),
+      ...(tokens.plan ? { plan: tokens.plan } : {}),
+      updatedAt: Date.now(),
+    })
+    .where(eq(modelAccounts.userId, userId))
 }
 
 /* ---------------------------------------------------------------- */
@@ -463,20 +477,30 @@ export async function beginDeviceAuth(userId: string): Promise<DeviceFlow> {
     at: Date.now(),
   }
   deviceFlows.set(userId, flow)
-  void pollDeviceAuth(userId, deviceAuthId, userCode, Math.max(1, Number(parsed.interval) || 5) * 1000)
+  /* the poller is handed the flow object it owns, so a restart's poller can
+     never write its outcome into the replacement flow */
+  void pollDeviceAuth(userId, flow, deviceAuthId, userCode, Math.max(1, Number(parsed.interval) || 5) * 1000)
   return { userCode: flow.userCode, verificationUrl: flow.verificationUrl, status: 'pending' }
 }
 
-async function pollDeviceAuth(userId: string, deviceAuthId: string, userCode: string, intervalMs: number) {
+async function pollDeviceAuth(
+  userId: string,
+  own: DeviceState,
+  deviceAuthId: string,
+  userCode: string,
+  intervalMs: number,
+) {
   const deadline = Date.now() + DEVICE_TTL_MS
+  /* this poller only ever owns the flow it was started for — if the user
+     restarted, `own` is no longer the live entry and its result is stale */
+  const live = () => (!own.cancelled && deviceFlows.get(userId) === own ? own : null)
   const fail = (message: string) => {
-    const flow = deviceFlows.get(userId)
-    if (flow && !flow.cancelled) Object.assign(flow, { status: 'error', error: message })
+    const flow = live()
+    if (flow) Object.assign(flow, { status: 'error', error: message })
   }
   while (Date.now() < deadline) {
     await new Promise((resolve) => setTimeout(resolve, intervalMs))
-    const flow = deviceFlows.get(userId)
-    if (!flow || flow.cancelled) return
+    if (!live()) return
     let res: Response
     try {
       res = await deviceRequest('/deviceauth/token', { device_auth_id: deviceAuthId, user_code: userCode })
@@ -504,8 +528,8 @@ async function pollDeviceAuth(userId: string, deviceAuthId: string, userCode: st
       /* the device flow hands back a normal PKCE pair; the exchange and the
          account write are exactly the browser flow's */
       await exchangeAndSave(userId, granted.authorization_code, granted.code_verifier, DEVICE_REDIRECT_URI)
-      const done = deviceFlows.get(userId)
-      if (done && !done.cancelled) done.status = 'connected'
+      const done = live()
+      if (done) done.status = 'connected'
     } catch (err) {
       fail(err instanceof Error ? err.message : 'Could not finish connecting that account')
     }
@@ -658,7 +682,13 @@ export async function withFreshToken(account: ModelAccount): Promise<ModelAccoun
       ...(auth.chatgpt_account_id ? { accountId: auth.chatgpt_account_id } : {}),
       ...(auth.chatgpt_plan_type ? { plan: auth.chatgpt_plan_type } : {}),
     }
-    await save(next)
+    await saveRefreshedTokens(account.userId, {
+      accessToken: next.accessToken!,
+      refreshToken: next.refreshToken!,
+      expiresAt: next.expiresAt!,
+      ...(auth.chatgpt_account_id ? { accountId: auth.chatgpt_account_id } : {}),
+      ...(auth.chatgpt_plan_type ? { plan: auth.chatgpt_plan_type } : {}),
+    })
     return next
   })().finally(() => refreshing.delete(account.userId))
   refreshing.set(account.userId, task)

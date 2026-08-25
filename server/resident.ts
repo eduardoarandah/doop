@@ -55,13 +55,18 @@ export function onFeedback(canvasId: string) {
  *  queue between runs is what carries a card into its next pipeline stage. */
 async function sweep(canvasId: string) {
   running.add(canvasId)
+  /* Requesters with no usable model right now. A run bills one person, so
+     without this a requester who cannot pay would be re-picked forever and
+     block everyone queued behind them. */
+  const stalled = new Set<string>()
   try {
     for (let i = 0; i < MAX_SWEEP_RUNS; i++) {
       const next = actions.pendingWorkAgents(canvasId)[0]
       if (!next) break
-      /* a run that claimed nothing leaves the queue exactly as it found it —
-         going round again would spin on the same work forever */
-      if (!(await runAgent(canvasId, next))) break
+      const outcome = await runAgent(canvasId, next, stalled)
+      /* 'idle' means nothing left this sweep can claim — going round again
+         would spin on the same work forever */
+      if (outcome === 'idle') break
     }
   } finally {
     running.delete(canvasId)
@@ -154,26 +159,38 @@ function strategyFor(text: string, frames: NonNullable<ReturnType<typeof store.g
   )
 }
 
-/** Returns false when the run claimed nothing — no model to run it, or no
- *  work actually waiting for this agent. */
-async function runAgent(canvasId: string, agentName: string): Promise<boolean> {
+type RunOutcome = 'ran' | 'idle' | 'no-model'
+
+/**
+ * Work one requester's queue for one agent. A run bills exactly one person:
+ * the account behind the oldest claimable item, resolved BEFORE anything is
+ * claimed so a server with no model at all leaves the queue untouched.
+ */
+async function runAgent(canvasId: string, agentName: string, stalled: Set<string>): Promise<RunOutcome> {
   const role = roleByAgentName(agentName) ?? roleById(DEFAULT_ROLE_ID)!
-  /* Whoever asked for this work is whose account runs it, once their free
-     tasks are gone. The canvas owner is the fallback for work queued before
-     requests carried an account id. Chosen BEFORE anything is claimed, so a
-     server with no model at all leaves the queue untouched. */
+  const payer = actions.nextWorkPayer(canvasId, role.name, stalled)
+  if (payer === undefined) return 'idle'
+  /* Only work that predates per-user attribution falls back to the canvas
+     owner — a real requester never bills a collaborator or the owner. */
   const canvasOwner = store.getCanvas(canvasId)?.ownerId
-  const model = await pickModel([...actions.pendingWorkUserIds(canvasId, role.name), canvasOwner])
-  if (!model) return false
+  const model = await pickModel(payer || canvasOwner)
+  if (!model) {
+    stalled.add(payer)
+    return 'no-model'
+  }
   const actor = actions.resolveActor({ name: role.name, kind: 'agent' })
 
   /* claim this agent's open work — the UI flips to "picked up" instantly.
      Claiming happens before the try so an agent with nothing to do never
      shows up in presence. */
-  const claimed = actions.takeFeedbackFor(canvasId, role.name)
-  const comments = actions.takeAgentCommentsFor(canvasId, role.name)
-  const cards = actions.takeQueuedCardsFor(canvasId, role.name)
-  if (claimed.length === 0 && comments.length === 0 && cards.length === 0) return false
+  const claimed = actions.takeFeedbackFor(canvasId, role.name, payer)
+  const comments = actions.takeAgentCommentsFor(canvasId, role.name, payer)
+  const cards = actions.takeQueuedCardsFor(canvasId, role.name, payer)
+  if (claimed.length === 0 && comments.length === 0 && cards.length === 0) {
+    /* nothing actually claimable for this payer — do not re-pick them */
+    stalled.add(payer)
+    return 'no-model'
+  }
 
   /* presence otherwise only refreshes on tool activity, and the sweep's TTL
      is shorter than a big generation turn */
@@ -448,7 +465,7 @@ async function runAgent(canvasId: string, agentName: string): Promise<boolean> {
     /* clear the status — this completes the agent's task in the panel */
     actions.setAgentStatus(canvasId, actor, '')
   }
-  return true
+  return 'ran'
 }
 
 const TOOLS: Anthropic.Tool[] = [
