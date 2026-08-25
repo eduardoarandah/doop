@@ -6752,66 +6752,55 @@ textarea {
   background: rgba(255, 184, 0, 0.12);
 }
 
-.admin-controls {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  margin: 28px 0 18px;
-  flex-wrap: wrap;
-}
-.admin-tabs {
-  display: inline-flex;
-  gap: 8px;
-}
-.admin-tabs .btn.on {
-  border-color: var(--ink);
-  color: var(--ink);
-}
-.admin-search {
-  flex: 1;
-  min-width: 200px;
-  font-family: var(--font-ui);
-  font-size: 14px;
-  padding: 8px 12px;
-  border: 1px solid var(--line);
-  border-radius: 10px;
-  background: var(--surface);
-  color: var(--ink);
-}
-.admin-search:focus {
-  outline: none;
-  border-color: var(--ink-faint);
-}
-
 /* the admin card is a container, not a button: its actions are inside it */
+.canvas-card.admin-card {
+  display: flex;
+  flex-direction: column;
+}
 .canvas-card.admin-card:hover {
   transform: none;
   box-shadow: var(--shadow-card);
   border-color: var(--line);
 }
-.admin-card .card-info .btn {
-  margin-top: 10px;
+.admin-card .card-preview {
+  aspect-ratio: 4 / 3;
 }
-
-.admin-users {
+.admin-card .card-info {
+  flex: 1;
   display: flex;
   flex-direction: column;
-  gap: 8px;
 }
-.admin-user-row {
+/* owner and counts wrap to two lines on some cards — reserving the space keeps
+   the "view as" buttons on one line across a row */
+.admin-card .card-info .meta {
+  min-height: 30px;
+  flex-wrap: wrap;
+  align-content: flex-start;
+}
+.admin-card .card-info .btn {
+  margin-top: auto;
+  align-self: flex-start;
+}
+.admin-card .card-info .meta .chip {
+  font-size: 10px;
+  padding: 1px 5px;
+}
+
+.admin-users .admin-user-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 16px;
-  padding: 12px 16px;
-  background: var(--surface);
-  border: 1px solid var(--line);
-  border-radius: 12px;
+  padding: 13px 18px;
+  border-bottom: 1px solid var(--line-soft);
+}
+.admin-users .admin-user-row:last-child {
+  border-bottom: 0;
 }
 .admin-user-row .name {
   font-family: var(--font-display);
   font-weight: 600;
-  font-size: 15px;
+  font-size: 14.5px;
   display: flex;
   align-items: center;
   gap: 8px;
@@ -6821,8 +6810,8 @@ textarea {
   display: flex;
   gap: 6px;
   align-items: center;
-  font-size: 13px;
-  color: var(--ink-soft);
+  font-size: 12.5px;
+  color: var(--ink-faint);
 }
 
 /* impersonation: deliberately loud, and it displaces the page rather than
