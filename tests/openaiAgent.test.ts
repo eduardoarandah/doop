@@ -1,0 +1,169 @@
+import { describe, expect, it } from 'vitest'
+import type Anthropic from '@anthropic-ai/sdk'
+import { _internal } from '../server/openaiAgent.ts'
+import { parseAuthCode } from '../server/modelAccounts.ts'
+
+/**
+ * The Doop Agent loop is written against Anthropic's message shape. When a run
+ * moves onto a user's ChatGPT subscription, every turn goes through this
+ * translation — so these tests pin the parts that would silently corrupt a run:
+ * tool-call round-tripping and the screenshots the agent verifies its work with.
+ */
+
+const { toInput, toTools, fromResponse, flattenToolResult } = _internal
+
+type Item = { type: string; role?: string; call_id?: string; name?: string; output?: string; content?: unknown[] }
+
+describe('Anthropic messages -> OpenAI Responses input', () => {
+  it('round-trips a tool call and its result under one call id', () => {
+    const messages: Anthropic.MessageParam[] = [
+      { role: 'user', content: 'Fix the hero spacing.' },
+      {
+        role: 'assistant',
+        content: [
+          { type: 'text', text: 'On it.' },
+          { type: 'tool_use', id: 'call_42', name: 'edit_frame_html', input: { frame_id: 'f1' } },
+        ],
+      },
+      { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'call_42', content: 'applied' }] },
+    ]
+    const items = toInput(messages) as Item[]
+
+    const call = items.find((i) => i.type === 'function_call')
+    const output = items.find((i) => i.type === 'function_call_output')
+    expect(call?.call_id).toBe('call_42')
+    expect(call?.name).toBe('edit_frame_html')
+    /* the output must carry the SAME id — OpenAI rejects an unanswered call */
+    expect(output?.call_id).toBe('call_42')
+    expect(output?.output).toBe('applied')
+    expect(items.indexOf(call!)).toBeLessThan(items.indexOf(output!))
+  })
+
+  it('re-attaches screenshot images as a following user message', () => {
+    /* function_call_output is text-only, so an image returned by
+       screenshot_frame has to ride along separately or the agent verifies
+       its work blind */
+    const messages: Anthropic.MessageParam[] = [
+      {
+        role: 'user',
+        content: [
+          {
+            type: 'tool_result',
+            tool_use_id: 'call_7',
+            content: [
+              { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'AAAA' } },
+              { type: 'text', text: 'frame rendered' },
+            ],
+          },
+        ],
+      },
+    ]
+    const items = toInput(messages) as Item[]
+
+    const output = items.find((i) => i.type === 'function_call_output')
+    expect(output?.output).toContain('frame rendered')
+    const message = items.find((i) => i.type === 'message' && i.role === 'user')
+    const parts = (message?.content ?? []) as { type: string; image_url?: string }[]
+    expect(parts[0].type).toBe('input_image')
+    expect(parts[0].image_url).toBe('data:image/png;base64,AAAA')
+    /* images come after the output they belong to */
+    expect(items.indexOf(output!)).toBeLessThan(items.indexOf(message!))
+  })
+
+  it('marks failed tool results as errors so the model can recover', () => {
+    const flat = flattenToolResult({
+      type: 'tool_result',
+      tool_use_id: 'call_9',
+      is_error: true,
+      content: '"find" text not found',
+    })
+    expect(flat.text).toBe('Error: "find" text not found')
+  })
+
+  it('keeps each tool schema intact', () => {
+    const tools = toTools([
+      {
+        name: 'screenshot_frame',
+        description: 'Render a frame',
+        input_schema: { type: 'object', properties: { frame_id: { type: 'string' } }, required: ['frame_id'] },
+      },
+    ]) as { type: string; name: string; parameters: unknown }[]
+    expect(tools[0].type).toBe('function')
+    expect(tools[0].name).toBe('screenshot_frame')
+    expect(tools[0].parameters).toEqual({
+      type: 'object',
+      properties: { frame_id: { type: 'string' } },
+      required: ['frame_id'],
+    })
+  })
+})
+
+describe('OpenAI Responses output -> Anthropic blocks', () => {
+  it('reads text and tool calls, and reports tool_use', () => {
+    const result = fromResponse({
+      status: 'completed',
+      output: [
+        { type: 'reasoning', id: 'rs_1' },
+        { type: 'message', content: [{ type: 'output_text', text: 'Tightening the hero.' }] },
+        { type: 'function_call', call_id: 'call_3', name: 'set_status', arguments: '{"status":"Fixing hero"}' },
+      ],
+    })
+    expect(result.stop_reason).toBe('tool_use')
+    expect(result.content).toEqual([
+      { type: 'text', text: 'Tightening the hero.' },
+      { type: 'tool_use', id: 'call_3', name: 'set_status', input: { status: 'Fixing hero' } },
+    ])
+  })
+
+  it('surfaces a truncated response as max_tokens so the loop can nudge', () => {
+    const result = fromResponse({
+      status: 'incomplete',
+      incomplete_details: { reason: 'max_output_tokens' },
+      output: [{ type: 'message', content: [{ type: 'output_text', text: 'partial' }] }],
+    })
+    expect(result.stop_reason).toBe('max_tokens')
+  })
+
+  it('surfaces a refusal', () => {
+    const result = fromResponse({
+      status: 'completed',
+      output: [{ type: 'message', content: [{ type: 'refusal', refusal: 'no' }] }],
+    })
+    expect(result.stop_reason).toBe('refusal')
+  })
+
+  it('treats an empty response as a failure rather than a finished turn', () => {
+    expect(() => fromResponse({ status: 'completed', output: [] })).toThrow()
+  })
+
+  it('does not lose a tool call whose arguments are malformed', () => {
+    const result = fromResponse({
+      status: 'completed',
+      output: [{ type: 'function_call', call_id: 'call_5', name: 'set_status', arguments: '{oops' }],
+    })
+    expect(result.content).toEqual([{ type: 'tool_use', id: 'call_5', name: 'set_status', input: {} }])
+  })
+})
+
+describe('ChatGPT redirect parsing', () => {
+  it('accepts the whole pasted redirect URL', () => {
+    expect(parseAuthCode('http://localhost:1455/auth/callback?code=abc123&state=xyz')).toEqual({
+      code: 'abc123',
+      state: 'xyz',
+    })
+  })
+
+  it('accepts a bare code', () => {
+    expect(parseAuthCode('  abc123 ')).toEqual({ code: 'abc123' })
+  })
+
+  it('reports OpenAI refusing the connection', () => {
+    expect(() =>
+      parseAuthCode('http://localhost:1455/auth/callback?error=access_denied&error_description=User+said+no'),
+    ).toThrow(/User said no/)
+  })
+
+  it('rejects a redirect URL with no code', () => {
+    expect(() => parseAuthCode('http://localhost:1455/auth/callback')).toThrow(/no \?code=/)
+  })
+})

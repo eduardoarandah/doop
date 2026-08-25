@@ -20,6 +20,51 @@ export interface DiscoveredSite {
   truncated: boolean
 }
 
+/** The Doop Agent's free-task meter for the signed-in user. */
+export interface Allowance {
+  used: number
+  limit: number
+  /** connected an agent of their own over MCP — unmetered */
+  connected: boolean
+  /** connected a model account the Doop Agent itself can run on */
+  byoModel: boolean
+  byoKind?: ModelAccountKind
+  byoEmail?: string
+  /** free tasks are spent and their own account is carrying the agent */
+  onOwnAccount: boolean
+}
+
+export type ModelAccountKind = 'chatgpt' | 'openai-key'
+
+/** An in-flight device sign-in: the user types `userCode` at `verificationUrl`
+ *  and the server polls OpenAI until they approve. */
+export interface DeviceFlow {
+  userCode: string
+  verificationUrl: string
+  status: 'pending' | 'connected' | 'error'
+  error?: string
+}
+
+export interface AgentModelOption {
+  id: string
+  name: string
+  blurb: string
+}
+
+export interface ModelAccountStatus {
+  connected: boolean
+  kind?: ModelAccountKind
+  email?: string
+  plan?: string
+  /** the model tier this account runs on right now */
+  model?: string
+  connectedAt?: number
+  /** false when the server has switched the ChatGPT flow off */
+  chatgptEnabled?: boolean
+  /** the tiers a user may pick between */
+  models?: AgentModelOption[]
+}
+
 export interface WebsiteImportResult {
   frames: Frame[]
   failures: { url: string; error: string }[]
@@ -131,7 +176,20 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ urls }),
     }),
-  agentAllowance: () => req<{ used: number; limit: number; connected: boolean }>('/api/agent-allowance'),
+  agentAllowance: () => req<Allowance>('/api/agent-allowance'),
+  modelAccount: () => req<ModelAccountStatus>('/api/model-account'),
+  chatgptAuthorize: () =>
+    req<{ url: string; state: string; catching: boolean }>('/api/model-account/chatgpt/authorize', { method: 'POST' }),
+  startDeviceAuth: () => req<DeviceFlow>('/api/model-account/chatgpt/device', { method: 'POST' }),
+  deviceAuthStatus: () => req<DeviceFlow | { status: 'none' }>('/api/model-account/chatgpt/device'),
+  cancelDeviceAuth: () => req('/api/model-account/chatgpt/device', { method: 'DELETE' }),
+  connectChatgpt: (redirect: string) =>
+    req<ModelAccountStatus>('/api/model-account/chatgpt', { method: 'POST', body: JSON.stringify({ redirect }) }),
+  connectOpenAiKey: (apiKey: string) =>
+    req<ModelAccountStatus>('/api/model-account/openai-key', { method: 'POST', body: JSON.stringify({ apiKey }) }),
+  disconnectModelAccount: () => req<ModelAccountStatus>('/api/model-account', { method: 'DELETE' }),
+  setAgentModel: (model: string) =>
+    req<ModelAccountStatus>('/api/model-account', { method: 'PATCH', body: JSON.stringify({ model }) }),
   addCard: (canvasId: string, title: string, agents: string[], attachments?: string[]) =>
     req(`/api/canvases/${canvasId}/cards`, { method: 'POST', body: JSON.stringify({ title, agents, attachments }) }),
   completeCard: (canvasId: string, cardId: string) =>

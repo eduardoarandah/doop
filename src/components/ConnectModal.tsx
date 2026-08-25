@@ -2,6 +2,9 @@ import { useMemo, useState } from 'react'
 import { useStore } from '../lib/store'
 import { roleByAgentName } from '../../shared/agents'
 
+/* This modal is about MCP agents only. Running the built-in Doop Agent on your
+   own ChatGPT subscription is an account-level setting and lives in /settings. */
+
 export function ConnectModal({ canvasId, onClose }: { canvasId: string; onClose: () => void }) {
   return (
     <div className="modal-backdrop" onClick={onClose}>

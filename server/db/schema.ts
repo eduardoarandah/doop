@@ -70,6 +70,8 @@ export const tasks = pgTable(
     stage: integer('stage'),
     /** comma-joined reference-frame ids uploaded with the prompt */
     attachments: text('attachments'),
+    /** account id of the human who queued the card — picks the model credential */
+    queuedByUserId: text('queued_by_user_id'),
   },
   (t) => [index('tasks_canvas_idx').on(t.canvasId)],
 )
@@ -83,6 +85,7 @@ export const feedback = pgTable(
     agentName: text('agent_name').notNull(),
     targetAgent: text('target_agent'),
     fromName: text('from_name').notNull(),
+    fromUserId: text('from_user_id'),
     text: text('text').notNull(),
     at: bigint('at', { mode: 'number' }).notNull(),
     deliveredAt: bigint('delivered_at', { mode: 'number' }),
@@ -103,6 +106,7 @@ export const comments = pgTable(
     selector: text('selector').notNull(),
     snippet: text('snippet').notNull(),
     fromName: text('from_name').notNull(),
+    fromUserId: text('from_user_id'),
     text: text('text').notNull(),
     at: bigint('at', { mode: 'number' }).notNull(),
     forAgent: boolean('for_agent').notNull().default(false),
@@ -260,5 +264,30 @@ export const activity = pgTable(
 export const residentUsage = pgTable('resident_usage', {
   userId: text('user_id').primaryKey(),
   used: integer('used').notNull().default(0),
+  updatedAt: bigint('updated_at', { mode: 'number' }).notNull(),
+})
+
+/** A user's own model subscription, connected so the Doop Agent keeps running
+ *  once their free tasks are gone. Today that is ChatGPT (OAuth against
+ *  auth.openai.com, refreshed here) or a plain OpenAI API key — `kind` says
+ *  which, and the token columns are empty for the key path. Secrets: these
+ *  rows are as sensitive as a password, and never leave the server. */
+export const modelAccounts = pgTable('model_accounts', {
+  userId: text('user_id').primaryKey(),
+  /** 'chatgpt' (subscription, OAuth) | 'openai-key' (pay-as-you-go API key) */
+  kind: text('kind').notNull(),
+  /** chatgpt: the ChatGPT account the tokens are scoped to */
+  accountId: text('account_id'),
+  /** display only — whose subscription this is, and which plan */
+  email: text('email'),
+  plan: text('plan'),
+  accessToken: text('access_token'),
+  refreshToken: text('refresh_token'),
+  /** epoch ms the access token expires; refreshed ahead of this */
+  expiresAt: bigint('expires_at', { mode: 'number' }),
+  apiKey: text('api_key'),
+  /** the model tier this user picked; null = the server default */
+  model: text('model'),
+  connectedAt: bigint('connected_at', { mode: 'number' }).notNull(),
   updatedAt: bigint('updated_at', { mode: 'number' }).notNull(),
 })

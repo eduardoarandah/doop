@@ -184,6 +184,36 @@ export function pendingWorkAgents(canvasId: string): string[] {
   return names
 }
 
+/** Account ids of the humans whose work this agent is about to claim, newest
+ *  request last. Read-only on purpose: the harness picks a model credential
+ *  from these before it claims anything. */
+export function pendingWorkUserIds(canvasId: string, agentName: string): string[] {
+  const ids: string[] = []
+  for (const card of taskLog.get(canvasId) ?? []) {
+    if (card.queuedBy && !card.agentName && !card.failedAt && !card.endedAt && stageAgent(card) === agentName) {
+      if (card.queuedByUserId) ids.push(card.queuedByUserId)
+    }
+  }
+  for (const c of commentLog.get(canvasId) ?? []) {
+    if (
+      c.forAgent &&
+      !c.claimedBy &&
+      !c.failedAt &&
+      !c.resolvedAt &&
+      (c.targetAgent ?? roleName(DEFAULT_ROLE_ID)) === agentName &&
+      c.fromUserId
+    ) {
+      ids.push(c.fromUserId)
+    }
+  }
+  for (const f of feedbackLog.get(canvasId) ?? []) {
+    if (!f.deliveredAt && !f.failedAt && (!f.targetAgent || f.targetAgent === agentName) && f.fromUserId) {
+      ids.push(f.fromUserId)
+    }
+  }
+  return [...new Set(ids)]
+}
+
 /* ------------------------------------------------------------------ */
 /* Agent tasks: every set_status becomes a task entry, so the client   */
 /* can show a per-agent history of work (à la Cursor's agent panel),   */
@@ -257,7 +287,12 @@ export function findFeedback(feedbackId: string): TaskFeedback | undefined {
   return undefined
 }
 
-export function addTaskFeedback(taskId: string, from: string, text: string): TaskFeedback | undefined {
+export function addTaskFeedback(
+  taskId: string,
+  from: string,
+  text: string,
+  fromUserId?: string,
+): TaskFeedback | undefined {
   const clean = text.trim()
   if (!clean) return undefined
   for (const [canvasId, tasks] of taskLog) {
@@ -273,6 +308,7 @@ export function addTaskFeedback(taskId: string, from: string, text: string): Tas
       agentName: task.agentName,
       ...(target ? { targetAgent: target } : {}),
       from,
+      ...(fromUserId ? { fromUserId } : {}),
       text: clean,
       at: Date.now(),
     }
@@ -389,6 +425,7 @@ export function addElementComment(
   frameId: string,
   input: { selector: string; snippet: string; text: string },
   from: string,
+  fromUserId?: string,
 ): ElementComment | undefined {
   const clean = input.text.trim()
   if (!clean) return undefined
@@ -403,6 +440,7 @@ export function addElementComment(
     selector: String(input.selector ?? '').slice(0, 300),
     snippet: String(input.snippet ?? '').slice(0, 400),
     from,
+    ...(fromUserId ? { fromUserId } : {}),
     text: clean,
     at: Date.now(),
     ...(mentioned ? { forAgent: true, targetAgent: mentioned.name } : {}),
@@ -573,6 +611,7 @@ export function addQueuedCard(
   from: string,
   agents?: unknown,
   attachments?: unknown,
+  fromUserId?: string,
 ): AgentTask | undefined {
   const clean = title.trim().slice(0, 200)
   if (!clean || !store.getCanvas(canvasId)) return undefined
@@ -599,6 +638,7 @@ export function addQueuedCard(
     status: clean,
     startedAt: Date.now(),
     queuedBy: from,
+    ...(fromUserId ? { queuedByUserId: fromUserId } : {}),
     pipeline,
     stage: 0,
     ...(refs.length > 0 ? { attachments: refs } : {}),

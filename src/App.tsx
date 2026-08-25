@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { Home } from './pages/Home'
+import { Settings } from './pages/Settings'
 import { CanvasPage } from './pages/CanvasPage'
 import { AuthPage } from './pages/AuthPage'
 import { Landing } from './pages/Landing'
@@ -78,6 +79,8 @@ export function App() {
     <CanvasPage canvasId={canvasMatch[1]} key={canvasMatch[1]} />
   ) : path.startsWith('/admin') ? (
     <Admin />
+  ) : path.startsWith('/settings') ? (
+    <Settings />
   ) : (
     <Home />
   )

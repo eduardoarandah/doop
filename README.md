@@ -23,8 +23,9 @@ activity feed.
 - **Design with agents, not prompts-and-refresh** — connect Claude Code (or any MCP client) once,
   then watch it sketch, stream and self-review designs on your canvas, next to your cursor.
 - **A built-in Doop Agent** — queue a card or @mention a role and it designs on its own, no client
-  to connect. Needs an `ANTHROPIC_API_KEY` ([setup](#the-doop-agent)); the first-canvas welcome
-  performance is scripted and runs without one.
+  to connect. Runs on the server's `ANTHROPIC_API_KEY` for a handful of free tasks, then on the
+  **ChatGPT subscription** (or OpenAI key) each user connects ([setup](#the-doop-agent)); the
+  first-canvas welcome performance is scripted and runs without any of it.
 - **True multiplayer** — live cursors, presence, per-frame editing indicators, undo/redo, comments
   pinned to elements, and an activity feed, all over one WebSocket room.
 - **Design memory** — pin exemplar frames, capture decisions, and let the distiller propose durable
@@ -102,37 +103,84 @@ without a human in the loop. Roles (Doop builds; specialists own one pass each �
 accessibility) are defined in [`shared/agents.ts`](shared/agents.ts), and a card can be routed
 through several in order.
 
-It requires an Anthropic API key:
+The server's own Anthropic key pays for the free tier:
 
 ```bash
 ANTHROPIC_API_KEY=sk-ant-...   # in .env, or the environment of your deployment
 ```
 
-**Without it the Doop Agent is off**, and it fails quietly by design — queued cards and `@mentions`
-simply wait for some agent to claim them. The startup banner tells you which state you're in:
-
-```
-⟡ doop agent        off — set ANTHROPIC_API_KEY to enable (agents connected over MCP work regardless)
-```
-
 Same key gates the **guideline distiller** ([`server/distill.ts`](server/distill.ts)), which proposes
 durable style rules from your canvas.
 
-**This is separate from connecting your own agent.** Claude Code and any other MCP client authenticate
-over OAuth and run on your own subscription — they need no key here and are never metered. The two are
-complementary: the Doop Agent is the zero-setup path, MCP is the bring-your-own path.
+### Past the free tasks: connect your own ChatGPT
 
-| Variable              | Default                     | What it does                                                   |
-| --------------------- | --------------------------- | -------------------------------------------------------------- |
-| `ANTHROPIC_API_KEY`   | _unset_                     | Enables the Doop Agent and the distiller. Unset = both off     |
-| `RESIDENT_TASK_LIMIT` | `5`                         | Free Doop Agent tasks per account. `0` = none (MCP users only) |
-| `DOOP_AGENT_MODEL`    | `claude-opus-5`             | Model for the Doop Agent                                       |
-| `DOOP_DISTILL_MODEL`  | `claude-haiku-4-5-20251001` | Model for the guideline distiller                              |
+When a user's `RESIDENT_TASK_LIMIT` free tasks are gone, they don't lose the agent — they connect a
+model account and the Doop Agent keeps running on it. **A connected account takes over immediately**,
+from the very next task: the free tier is a trial that gets people here, not a balance to spend down
+first, and connecting stops costing the server anything from that moment. The connection is
+account-level, so it lives at **/settings** (Home → Settings); the free-tier wall links there rather
+than carrying its own copy, and "Connect an AI agent" on a canvas stays about MCP clients only. Two
+kinds of account:
+
+- **ChatGPT subscription** — OAuth against `auth.openai.com`, then inference through the Codex
+  backend that Plus/Pro/Business plans include. Tokens live in `model_accounts` and never reach a
+  browser.
+- **OpenAI API key** — pay-as-you-go on the user's own OpenAI account, no subscription involved.
+
+Either way the user picks their **model tier** in Settings — `gpt-5.6-sol` (flagship),
+`gpt-5.6-terra` (the default workhorse) or `gpt-5.6-luna` (cheap and fast). They are paying for it,
+so the choice is theirs; `DOOP_AGENT_OPENAI_MODEL` only sets the default they start on. Note that
+`gpt-5.4` and `gpt-5.4-mini` retire from ChatGPT-authenticated Codex on **31 August 2026**, so
+pinning a 5.4 id via that env var will break the subscription path after that date.
+
+OpenAI registers no redirect URI for a hosted app, so connecting ChatGPT takes one of three shapes
+and Doop picks the cheapest one available:
+
+| Where Doop runs                              | Flow                                         | What the user does                                            |
+| -------------------------------------------- | -------------------------------------------- | ------------------------------------------------------------- |
+| Same machine as the browser (dev, self-host) | Loopback catch — Doop holds `127.0.0.1:1455` | Approve in the OpenAI tab. Nothing to copy, no setup          |
+| Hosted (doop.design)                         | Device code (`/api/accounts/deviceauth/*`)   | Type a short code at `auth.openai.com/codex/device`           |
+| Device codes disallowed                      | Browser redirect + paste                     | Paste the dead `localhost:1455` page's address back into Doop |
+
+The device flow needs **device code authorization** switched on in ChatGPT → Settings → Security
+(workspace members need an admin to allow it) — that is why the loopback flow, which needs no
+setting at all, stays the default when Doop is local. All three end at the same server-side PKCE
+exchange.
+
+> **Before you turn this on for real users:** driving a ChatGPT subscription from a third-party
+> server is not something OpenAI's terms sanction, and heavy use can get an account rate-limited or
+> suspended. The API-key path is the fully supported alternative and shares all the same code.
+> `CHATGPT_CONNECT_DISABLED=1` switches the subscription path off and leaves the key path.
+
+Runs are attributed to the human whose card, comment or feedback they picked up, so the person who
+asked for the work is the person whose account runs it. The translation between the agent's
+Anthropic-shaped loop and OpenAI's Responses API lives in
+[`server/openaiAgent.ts`](server/openaiAgent.ts); which credential a run gets is decided in
+[`server/agentModel.ts`](server/agentModel.ts).
+
+**With no server key and no connected account** the Doop Agent is off, and it fails quietly by
+design — queued cards and `@mentions` simply wait for some agent to claim them. The startup banner
+tells you which state you're in.
+
+**All of this is separate from connecting your own agent.** Claude Code and any other MCP client
+authenticate over OAuth and drive the canvas from outside, on your own subscription — never metered.
+Three paths, same canvas: the Doop Agent on our key (free tier), the Doop Agent on your key, or your
+own agent over MCP.
+
+| Variable                   | Default                     | What it does                                                             |
+| -------------------------- | --------------------------- | ------------------------------------------------------------------------ |
+| `ANTHROPIC_API_KEY`        | _unset_                     | Pays for the free Doop Agent tier and the distiller                      |
+| `RESIDENT_TASK_LIMIT`      | `5`                         | Free Doop Agent tasks per account before a connection is needed          |
+| `DOOP_AGENT_MODEL`         | `claude-opus-5`             | Model for the Doop Agent on the server's key                             |
+| `DOOP_AGENT_OPENAI_MODEL`  | `gpt-5.6-terra`             | Default tier on a user's account; each user can pick another in Settings |
+| `CHATGPT_CONNECT_DISABLED` | _unset_                     | `1` hides the ChatGPT flow, leaving the API-key path                     |
+| `DOOP_DISTILL_MODEL`       | `claude-haiku-4-5-20251001` | Model for the guideline distiller                                        |
 
 `RESIDENT_TASK_LIMIT` is the free-tier meter for the hosted version. It counts only tasks a user
 _initiates_ — feedback replies and retries on existing work stay free — and users who have connected
-their own agent over MCP bypass it entirely. There is no "unlimited" value: self-hosting with your own
-key, set it to a large number, since you're paying Anthropic directly either way.
+either their own MCP agent or a model account bypass it entirely. There is no "unlimited" value:
+self-hosting with your own key, set it to a large number, since you're paying Anthropic directly
+either way.
 
 ## Accounts
 

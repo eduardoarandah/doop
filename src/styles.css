@@ -364,6 +364,61 @@ textarea {
 .connect-band .cb-code label:first-child {
   margin-top: 0;
 }
+/* ---- settings ---- */
+
+.settings-title {
+  margin-top: 40px;
+  font-family: var(--font-display);
+  font-size: 40px;
+  font-weight: 800;
+  letter-spacing: -0.03em;
+}
+.settings-card {
+  margin-top: 28px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 20px;
+  padding: 28px 32px 30px;
+  box-shadow: var(--shadow-card);
+  /* wide enough that a plan row's chips and its action share one line */
+  max-width: 980px;
+}
+.settings-head h2 {
+  font-family: var(--font-display);
+  font-size: 20px;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+}
+.settings-head p {
+  margin-top: 10px;
+  font-size: 14px;
+  line-height: 1.6;
+  color: var(--ink-soft);
+  max-width: 46em;
+}
+.settings-meter {
+  margin-top: 12px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink);
+}
+.settings-card .plan-rows {
+  margin-top: 20px;
+}
+.home-logo {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  font: inherit;
+  color: inherit;
+}
+.settings-page .home-mark {
+  justify-content: space-between;
+}
 
 /* ---- agents box ---- */
 
@@ -2252,7 +2307,10 @@ textarea {
   color: var(--ink-faint);
   font-family: var(--font-mono);
 }
-.danger {
+/* the bare text-style destructive action (menu items, inspector). Scoped away
+   from .btn so a `btn danger` button keeps the button's own size and padding —
+   this rule sits later in the file and would otherwise shrink it. */
+.danger:not(.btn) {
   background: none;
   border: none;
   color: var(--accent-ink);
@@ -2261,7 +2319,7 @@ textarea {
   padding: 4px 8px;
   border-radius: 6px;
 }
-.danger:hover {
+.danger:not(.btn):hover {
   background: rgba(229, 83, 60, 0.1);
 }
 
@@ -2397,6 +2455,10 @@ textarea {
   display: flex;
   justify-content: flex-end;
   gap: 10px;
+}
+/* a row of primary actions rather than a dialog footer */
+.modal .close-row.start {
+  justify-content: flex-start;
 }
 
 .import-modal {
@@ -5749,6 +5811,262 @@ textarea {
 }
 .meter-line.out {
   color: var(--accent-ink);
+}
+.meter-line.byo {
+  color: #1e7a4c;
+}
+
+/* connect-your-own-model panel (ChatGPT subscription / OpenAI key) */
+.ma-help {
+  margin-top: 8px;
+  margin-bottom: 12px;
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--ink-soft);
+}
+.ma-steps {
+  margin: 10px 0 12px 18px;
+  font-size: 13px;
+  line-height: 1.7;
+  color: var(--ink-soft);
+}
+.ma-steps code {
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+.ma-input {
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid var(--ink);
+  border-radius: 10px;
+  background: var(--surface);
+  color: var(--ink);
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+.ma-input:focus {
+  outline: 2px solid var(--accent);
+  outline-offset: -1px;
+}
+.ma-actions {
+  margin-top: 12px;
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+.ma-toggle {
+  display: block;
+  margin-top: 16px;
+  text-align: left;
+  background: none;
+  border: none;
+  padding: 0;
+  font-size: 12.5px;
+  color: var(--ink-faint);
+  cursor: pointer;
+}
+.ma-toggle:hover {
+  color: var(--ink);
+}
+.ma-toggle.inline {
+  margin-top: 0;
+  text-decoration: underline;
+}
+.ma-waiting {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin-top: 10px;
+  font-size: 13px;
+  color: var(--ink-soft);
+}
+.ma-error {
+  margin-top: 10px;
+  font-size: 12.5px;
+  color: var(--accent-ink);
+}
+/* provider rows: one per model plan, each carrying its own connect flow and
+   its model tiers as chips (the tiers are the picker, not a dropdown) */
+.plan-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  margin-top: 4px;
+}
+.plan-row {
+  display: flex;
+  gap: 18px;
+  padding: 22px 24px;
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.6);
+}
+.plan-row.live {
+  background: var(--surface);
+  border-color: var(--ink);
+}
+.plan-mark {
+  flex: none;
+  width: 32px;
+  height: 32px;
+  display: grid;
+  place-items: center;
+  color: var(--ink);
+}
+.plan-body {
+  flex: 1;
+  min-width: 0;
+}
+.plan-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.plan-head h3 {
+  font-family: var(--font-display);
+  font-size: 18px;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  text-transform: none;
+  color: var(--ink);
+}
+.plan-pill {
+  font-size: 11.5px;
+  font-weight: 700;
+  padding: 3px 9px;
+  border-radius: 999px;
+  background: var(--paper-deep);
+  color: var(--ink-faint);
+}
+.plan-pill.on {
+  background: rgba(30, 122, 76, 0.12);
+  color: #1a6b43;
+}
+.plan-desc {
+  margin-top: 6px;
+  font-size: 14px;
+  line-height: 1.55;
+  color: var(--ink-soft);
+}
+/* One fact per line, labels and values in their own columns — with labels of
+   different widths ("Connected as" / "Plan") a plain inline run leaves the
+   values ragged. */
+.plan-as {
+  margin-top: 14px;
+  display: grid;
+  grid-template-columns: auto auto;
+  justify-content: start;
+  align-items: center;
+  gap: 8px 14px;
+  font-size: 13px;
+  color: var(--ink-soft);
+}
+.plan-as dd {
+  min-width: 0;
+}
+.plan-as code {
+  display: inline-block;
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  line-height: 1.5;
+  background: var(--paper-deep);
+  padding: 3px 9px;
+  border-radius: 7px;
+  color: var(--ink);
+  overflow-wrap: anywhere;
+}
+/* chips left, the row's action right, sharing one line */
+.plan-actions-row {
+  margin-top: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  flex-wrap: wrap;
+}
+.plan-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 9px;
+}
+.plan-chips .chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-family: var(--font-ui);
+  font-size: 13px;
+  font-weight: 500;
+  padding: 8px 13px;
+  border-radius: 9px;
+  border: 1px solid transparent;
+  background: var(--paper-deep);
+  color: var(--ink-soft);
+  cursor: pointer;
+}
+.plan-chips .chip:hover:not(:disabled) {
+  color: var(--ink);
+}
+.plan-chips .chip.on {
+  background: var(--surface);
+  border-color: var(--ink);
+  color: var(--ink);
+  font-weight: 600;
+  box-shadow: 2px 2px 0 rgba(18, 18, 23, 0.9);
+}
+.plan-chips .chip:disabled {
+  cursor: default;
+}
+/* inert on a row that is not the connected one — a capability list, not a control */
+.plan-chips .chip.idle {
+  cursor: default;
+  opacity: 0.75;
+}
+.plan-note {
+  margin-top: 10px;
+  font-size: 13px;
+  color: var(--ink-faint);
+}
+.plan-flow {
+  margin-top: 14px;
+}
+.btn.danger {
+  background: var(--accent);
+  border-color: var(--accent-ink);
+  color: #fff;
+  box-shadow: 2px 2px 0 var(--accent-ink);
+}
+.btn.danger:hover {
+  box-shadow: 3px 3px 0 var(--accent-ink);
+}
+
+.ma-model {
+  margin-top: 16px;
+}
+.ma-model label {
+  display: block;
+  margin-bottom: 6px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+}
+.ma-model select {
+  width: 100%;
+  padding: 9px 12px;
+  border: 1px solid var(--ink);
+  border-radius: 10px;
+  background: var(--surface);
+  color: var(--ink);
+  font: inherit;
+  font-size: 13px;
+}
+.ma-model select:focus {
+  outline: 2px solid var(--accent);
+  outline-offset: -1px;
+}
+.ma-model .ma-help {
+  margin-bottom: 0;
 }
 .agent-arrival {
   display: inline-flex;

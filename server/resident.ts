@@ -1,5 +1,6 @@
-import Anthropic from '@anthropic-ai/sdk'
+import type Anthropic from '@anthropic-ai/sdk'
 import { store } from './store.ts'
+import { ModelAuthError, pickModel } from './agentModel.ts'
 import * as actions from './actions.ts'
 import { inspectFrame, renderFrame } from './screenshot.ts'
 import { AGENT_ROLES, DEFAULT_ROLE_ID, roleById, roleByAgentName, roleName } from '../shared/agents.ts'
@@ -20,11 +21,13 @@ import type { Frame } from '../shared/types.ts'
  * use, so users see the full show: presence, set_status in the working-now
  * strip, a task in the panel, and edits playing back through the reveal.
  *
- * Enabled when ANTHROPIC_API_KEY is set; silently disabled otherwise (the
- * feedback queue then behaves as before — the next connected agent claims it).
+ * Which model each run uses is server/agentModel.ts's decision: the server's
+ * ANTHROPIC_API_KEY covers the free tier, and past that the run moves onto the
+ * model account the requesting human connected (their ChatGPT subscription or
+ * OpenAI key). With neither, the queue behaves as it always did — the work
+ * waits for the next agent to connect over MCP.
  */
 
-const MODEL = process.env.DOOP_AGENT_MODEL || 'claude-opus-5'
 const MAX_TURNS = 24
 /* a redesign card delivers an audit doc plus TWO draft frames in one run */
 const MAX_REDESIGN_TURNS = 40
@@ -36,29 +39,11 @@ const MAX_HTML_READ_CHARS = 30_000
 const MAX_REWRITE_CHUNK_CHARS = 12_000
 const MAX_REWRITE_CHARS = 100_000
 
-let client: Anthropic | null = null
-let warned = false
-
-function getClient(): Anthropic | null {
-  if (!process.env.ANTHROPIC_API_KEY) {
-    if (!warned) {
-      warned = true
-      console.log(
-        '[doop-agent] ANTHROPIC_API_KEY not set — the Doop Agent is disabled, so queued cards and @mentions will not be picked up. See README → "The Doop Agent". Agents connected over MCP are unaffected.',
-      )
-    }
-    return null
-  }
-  if (!client) client = new Anthropic()
-  return client
-}
-
 /* one run per canvas at a time; feedback arriving mid-run queues a re-run */
 const running = new Set<string>()
 const queued = new Set<string>()
 
 export function onFeedback(canvasId: string) {
-  if (!getClient()) return
   if (running.has(canvasId)) {
     queued.add(canvasId)
     return
@@ -74,7 +59,9 @@ async function sweep(canvasId: string) {
     for (let i = 0; i < MAX_SWEEP_RUNS; i++) {
       const next = actions.pendingWorkAgents(canvasId)[0]
       if (!next) break
-      await runAgent(canvasId, next)
+      /* a run that claimed nothing leaves the queue exactly as it found it —
+         going round again would spin on the same work forever */
+      if (!(await runAgent(canvasId, next))) break
     }
   } finally {
     running.delete(canvasId)
@@ -167,10 +154,17 @@ function strategyFor(text: string, frames: NonNullable<ReturnType<typeof store.g
   )
 }
 
-async function runAgent(canvasId: string, agentName: string) {
-  const anthropic = getClient()
-  if (!anthropic) return
+/** Returns false when the run claimed nothing — no model to run it, or no
+ *  work actually waiting for this agent. */
+async function runAgent(canvasId: string, agentName: string): Promise<boolean> {
   const role = roleByAgentName(agentName) ?? roleById(DEFAULT_ROLE_ID)!
+  /* Whoever asked for this work is whose account runs it, once their free
+     tasks are gone. The canvas owner is the fallback for work queued before
+     requests carried an account id. Chosen BEFORE anything is claimed, so a
+     server with no model at all leaves the queue untouched. */
+  const canvasOwner = store.getCanvas(canvasId)?.ownerId
+  const model = await pickModel([...actions.pendingWorkUserIds(canvasId, role.name), canvasOwner])
+  if (!model) return false
   const actor = actions.resolveActor({ name: role.name, kind: 'agent' })
 
   /* claim this agent's open work — the UI flips to "picked up" instantly.
@@ -179,7 +173,7 @@ async function runAgent(canvasId: string, agentName: string) {
   const claimed = actions.takeFeedbackFor(canvasId, role.name)
   const comments = actions.takeAgentCommentsFor(canvasId, role.name)
   const cards = actions.takeQueuedCardsFor(canvasId, role.name)
-  if (claimed.length === 0 && comments.length === 0 && cards.length === 0) return
+  if (claimed.length === 0 && comments.length === 0 && cards.length === 0) return false
 
   /* presence otherwise only refreshes on tool activity, and the sweep's TTL
      is shorter than a big generation turn */
@@ -286,7 +280,7 @@ async function runAgent(canvasId: string, agentName: string) {
         : '')
 
     console.log(
-      `[resident] run start canvas=${canvasId} agent=${role.name} feedback=${claimed.length} comments=${comments.length} cards=${cards.length}`,
+      `[resident] run start canvas=${canvasId} agent=${role.name} model=${model.label}${model.userId ? ` on=${model.userId}` : ''} feedback=${claimed.length} comments=${comments.length} cards=${cards.length}`,
     )
     /* a review pass legitimately ends without touching a frame; an
        originating pass that changed nothing has not delivered its card */
@@ -295,6 +289,7 @@ async function runAgent(canvasId: string, agentName: string) {
     const runState: RunState = { mutatedFrames: new Set(), verifiedFrames: new Set(), rewriteDrafts: new Map() }
     let refused = false
     let crashed = false
+    let staleAccount = false
     let finished = false
     let mutationNudgeSent = false
     let verificationNudgeSent = false
@@ -306,23 +301,21 @@ async function runAgent(canvasId: string, agentName: string) {
          breakpoint: the role prefix stays cacheable across canvases, and the
          (rarely-changing) docs cache across the turns of a run */
       const guidelineDocs = store.getGuidelines(canvasId)
-      const guidelinesBlock: Anthropic.TextBlockParam[] = guidelineDocs.length
+      const guidelinesBlock = guidelineDocs.length
         ? [
             {
-              type: 'text',
               text:
                 `# Canvas design guidelines\nEvery frame on this canvas must follow these docs — they outrank your own aesthetic preferences:\n\n` +
                 guidelineDocs.map((d) => `## ${d.name}\n\n${d.markdown}`).join('\n\n'),
-              cache_control: { type: 'ephemeral' },
+              cache: true,
             },
           ]
         : []
       const maxTurns = REDESIGN_RE.test(workText) ? MAX_REDESIGN_TURNS : MAX_TURNS
       for (let turn = 0; turn < maxTurns; turn++) {
-        const res = await anthropic.messages.create({
-          model: MODEL,
-          max_tokens: 16000,
-          system: [{ type: 'text', text: systemFor(role), cache_control: { type: 'ephemeral' } }, ...guidelinesBlock],
+        const res = await model.run({
+          maxTokens: 16000,
+          system: [{ text: systemFor(role), cache: true }, ...guidelinesBlock],
           tools: TOOLS,
           messages,
         })
@@ -335,7 +328,9 @@ async function runAgent(canvasId: string, agentName: string) {
 
         messages.push({ role: 'assistant', content: res.content })
         turnsUsed = turn + 1
-        const toolBlocks = res.content.filter((block): block is Anthropic.ToolUseBlock => block.type === 'tool_use')
+        const toolBlocks = res.content.filter(
+          (block): block is Anthropic.ToolUseBlockParam => block.type === 'tool_use',
+        )
         console.log(
           `[resident] response canvas=${canvasId} turn=${turnsUsed} stop=${res.stop_reason} tools=${toolBlocks.map((block) => block.name).join(',') || 'none'}`,
         )
@@ -391,8 +386,15 @@ async function runAgent(canvasId: string, agentName: string) {
     } catch (err) {
       /* An API/tool crash becomes a visible, manually retryable failure. */
       crashed = true
+      /* a dead credential is the one crash a human can actually fix, so it
+         gets its own wording all the way through to the card */
+      staleAccount = err instanceof ModelAuthError
       console.error('[resident] run errored', err)
-      actions.setAgentStatus(canvasId, actor, 'Hit a snag — waiting for a retry')
+      actions.setAgentStatus(
+        canvasId,
+        actor,
+        staleAccount ? 'Your model connection expired — reconnect it' : 'Hit a snag — waiting for a retry',
+      )
     }
 
     /* only a NATURALLY finished run completes its work — refused, crashed,
@@ -426,15 +428,17 @@ async function runAgent(canvasId: string, agentName: string) {
       /* a card moves to the next agent in its pipeline, or finishes here */
       for (const c of cards) actions.advanceCard(canvasId, c.id, actor)
     } else {
-      const reason = refused
-        ? `${role.name} could not take this request. Retry when you are ready.`
-        : crashed
-          ? `${role.name} hit a snag before finishing. Retry when you are ready.`
-          : exhausted
-            ? `${role.name} ran out of turns before finishing. Retry when you are ready.`
-            : noMutation
-              ? `${role.name} finished without changing a frame. Retry when you are ready.`
-              : `${role.name} changed a frame but could not verify it. Retry when you are ready.`
+      const reason = staleAccount
+        ? `${model.label} turned down the connected account. Reconnect it in Doop, then retry.`
+        : refused
+          ? `${role.name} could not take this request. Retry when you are ready.`
+          : crashed
+            ? `${role.name} hit a snag before finishing. Retry when you are ready.`
+            : exhausted
+              ? `${role.name} ran out of turns before finishing. Retry when you are ready.`
+              : noMutation
+                ? `${role.name} finished without changing a frame. Retry when you are ready.`
+                : `${role.name} changed a frame but could not verify it. Retry when you are ready.`
       for (const f of claimed) actions.failTaskFeedback(f.id, reason)
       for (const c of comments) actions.failComment(c.id, reason)
       for (const c of cards) actions.failCard(canvasId, c.id, reason)
@@ -444,6 +448,7 @@ async function runAgent(canvasId: string, agentName: string) {
     /* clear the status — this completes the agent's task in the panel */
     actions.setAgentStatus(canvasId, actor, '')
   }
+  return true
 }
 
 const TOOLS: Anthropic.Tool[] = [
@@ -698,7 +703,7 @@ async function frameImageBlocks(
 }
 
 async function execTool(
-  block: Anthropic.ToolUseBlock,
+  block: Anthropic.ToolUseBlockParam,
   canvasId: string,
   actor: ReturnType<typeof actions.resolveActor>,
   runState: RunState,

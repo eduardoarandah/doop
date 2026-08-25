@@ -60,6 +60,9 @@ export function Home() {
                 </button>
               )}
               {session.user.name}
+              <button className="btn ghost" onClick={() => navigate('/settings')}>
+                Settings
+              </button>
               <button
                 className="btn ghost"
                 onClick={() =>

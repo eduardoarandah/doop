@@ -27,6 +27,8 @@ import {
 } from './assets.ts'
 import { seed } from './seed.ts'
 import * as allowance from './allowance.ts'
+import * as modelAccounts from './modelAccounts.ts'
+import { AGENT_MODELS } from './openaiAgent.ts'
 import { mentionedRole } from '../shared/agents.ts'
 import { colorFor } from '../shared/types.ts'
 import type { ClientMessage, Presence, ServerMessage } from '../shared/types.ts'
@@ -536,12 +538,107 @@ function requireFrame(req: express.Request, res: express.Response, frameId: stri
 
 app.use('/api/admin', adminRouter)
 
-/* free-tier meter for the resident team: {used, limit, connected} */
+/* free-tier meter for the resident team: {used, limit, connected, byoModel} */
 app.get('/api/agent-allowance', (req, res) => {
   allowance
     .getAllowance(req.user!.id)
     .then((a) => res.json(a))
     .catch(() => res.status(500).json({ error: 'allowance unavailable' }))
+})
+
+/* ---- the user's own model account: what keeps the Doop Agent running once
+   the free tasks are gone. Tokens live server-side and are never returned. */
+
+/* Every route that returns an account status returns the SAME shape: the
+   client re-renders straight from the response, so dropping the model list on
+   a PATCH would collapse the picker until the next reload. */
+function accountView(status: modelAccounts.AccountStatus) {
+  return { ...status, chatgptEnabled: modelAccounts.chatgptConnectEnabled(), models: AGENT_MODELS }
+}
+
+app.get('/api/model-account', (req, res) => {
+  modelAccounts
+    .getStatus(req.user!.id)
+    .then((status) => res.json(accountView(status)))
+    .catch(() => res.status(500).json({ error: 'account status unavailable' }))
+})
+
+/* which model tier the connected account runs on */
+app.patch('/api/model-account', async (req, res) => {
+  try {
+    res.json(accountView(await modelAccounts.setAccountModel(req.user!.id, String(req.body?.model ?? ''))))
+  } catch (e) {
+    res.status(400).json({ error: e instanceof Error ? e.message : 'could not change the model' })
+  }
+})
+
+/* OpenAI's only registered redirect is a loopback URL, so the browser's
+   callback is reachable by us exactly when the browser is on this machine.
+   A forwarded request came through a proxy and is by definition not. */
+function isSameMachine(req: express.Request): boolean {
+  if (req.headers['x-forwarded-for'] || req.headers['forwarded']) return false
+  const ip = req.socket.remoteAddress ?? ''
+  return ip === '127.0.0.1' || ip === '::1' || ip === '::ffff:127.0.0.1'
+}
+
+/* step 1 of the ChatGPT flow: hand back the OpenAI authorize URL to open.
+   `catching` tells the client we will pick the redirect up ourselves, so it
+   can poll instead of asking the user to copy anything. */
+app.post('/api/model-account/chatgpt/authorize', async (req, res) => {
+  if (!modelAccounts.chatgptConnectEnabled()) {
+    return res.status(404).json({ error: 'ChatGPT connections are disabled on this server' })
+  }
+  const started = modelAccounts.beginChatgptAuth(req.user!.id)
+  const catching = isSameMachine(req) ? await modelAccounts.startCallbackCatcher() : false
+  res.json({ ...started, catching })
+})
+
+/* step 2: the user pastes the redirect URL they landed on; we do the code
+   exchange server-side, so the browser never handles a token */
+app.post('/api/model-account/chatgpt', async (req, res) => {
+  if (!modelAccounts.chatgptConnectEnabled()) {
+    return res.status(404).json({ error: 'ChatGPT connections are disabled on this server' })
+  }
+  try {
+    res.json(accountView(await modelAccounts.completeChatgptAuth(req.user!.id, String(req.body?.redirect ?? ''))))
+  } catch (e) {
+    res.status(400).json({ error: e instanceof Error ? e.message : 'could not connect that ChatGPT account' })
+  }
+})
+
+/* device flow: no redirect URI at all, so it works wherever Doop is hosted.
+   We poll OpenAI in the background; the browser polls the status below. */
+app.post('/api/model-account/chatgpt/device', async (req, res) => {
+  if (!modelAccounts.chatgptConnectEnabled()) {
+    return res.status(404).json({ error: 'ChatGPT connections are disabled on this server' })
+  }
+  try {
+    res.json(await modelAccounts.beginDeviceAuth(req.user!.id))
+  } catch (e) {
+    res.status(400).json({ error: e instanceof Error ? e.message : 'could not start a device sign-in' })
+  }
+})
+
+app.get('/api/model-account/chatgpt/device', (req, res) => {
+  res.json(modelAccounts.deviceAuthStatus(req.user!.id) ?? { status: 'none' })
+})
+
+app.delete('/api/model-account/chatgpt/device', (req, res) => {
+  modelAccounts.cancelDeviceAuth(req.user!.id)
+  res.json({ ok: true })
+})
+
+app.post('/api/model-account/openai-key', async (req, res) => {
+  try {
+    res.json(accountView(await modelAccounts.connectApiKey(req.user!.id, String(req.body?.apiKey ?? ''))))
+  } catch (e) {
+    res.status(400).json({ error: e instanceof Error ? e.message : 'could not save that API key' })
+  }
+})
+
+app.delete('/api/model-account', async (req, res) => {
+  await modelAccounts.disconnect(req.user!.id)
+  res.json(accountView({ connected: false }))
 })
 
 app.get('/api/canvases', (req, res) =>
@@ -819,6 +916,7 @@ app.post('/api/frames/:id/comments', async (req, res) => {
     req.params.id,
     { selector: String(selector ?? ''), snippet: String(snippet ?? ''), text: String(text ?? '') },
     req.user!.name,
+    req.user!.id,
   )
   if (!comment) return res.status(404).json({ error: 'frame not found or empty text' })
   res.json(comment)
@@ -958,7 +1056,14 @@ app.post('/api/canvases/:id/cards', async (req, res) => {
   if (!gate.ok) {
     return res.status(403).json({ error: 'resident_limit', used: gate.used, limit: gate.limit })
   }
-  const card = actions.addQueuedCard(req.params.id, title, req.user!.name, req.body?.agents, req.body?.attachments)
+  const card = actions.addQueuedCard(
+    req.params.id,
+    title,
+    req.user!.name,
+    req.body?.agents,
+    req.body?.attachments,
+    req.user!.id,
+  )
   if (!card) return res.status(404).json({ error: 'canvas not found or empty title' })
   res.json(card)
 })
@@ -981,7 +1086,7 @@ app.post('/api/tasks/:id/feedback', (req, res) => {
   const canvasId = actions.taskCanvasId(req.params.id)
   if (!canvasId) return res.status(404).json({ error: 'task not found' })
   if (!requireCanvas(req, res, canvasId)) return
-  const fb = actions.addTaskFeedback(req.params.id, req.user!.name, String(req.body?.text ?? ''))
+  const fb = actions.addTaskFeedback(req.params.id, req.user!.name, String(req.body?.text ?? ''), req.user!.id)
   if (!fb) return res.status(404).json({ error: 'task not found or empty text' })
   res.json(fb)
 })
@@ -1199,7 +1304,7 @@ server.listen(PORT, () => {
      sit there. Say so at boot, not only when the first card is queued. */
   console.log(
     process.env.ANTHROPIC_API_KEY
-      ? '⟡ doop agent        on'
-      : '⟡ doop agent        off — set ANTHROPIC_API_KEY to enable (agents connected over MCP work regardless)',
+      ? '⟡ doop agent        on — free tier on this server’s key, then each user’s own ChatGPT/OpenAI account'
+      : '⟡ doop agent        no server key — runs only for users who connect their own ChatGPT subscription or OpenAI key (set ANTHROPIC_API_KEY for a free tier; agents connected over MCP work regardless)',
   )
 })

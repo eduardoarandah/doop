@@ -55,6 +55,9 @@ interface State {
   /** the free-tier wall is showing — in the store so any surface that hits
    *  the resident-task limit (board, prompt bar, element comment) can raise it */
   limitWall: boolean
+  /** bumped whenever the allowance could have changed (a model account was
+   *  connected or dropped) so every meter on screen re-reads it */
+  allowanceVersion: number
   /** a request for the Stage to glide the camera to a frame — the prompt bar
    *  raises it so a first deliverable streams in on-screen, never off-canvas */
   flyTo: { frameId: string; at: number } | null
@@ -90,6 +93,7 @@ interface State {
   upsertProposal(proposal: MemoryProposal): void
   setPanelTab(tab: 'tasks' | 'activity' | 'memory'): void
   setLimitWall(v: boolean): void
+  allowanceChanged(): void
   requestFlyTo(frameId: string): void
   select(id: string | null): void
   openCtxMenu(menu: { frameId: string; x: number; y: number; deferPanel: boolean }): void
@@ -112,6 +116,7 @@ export const useStore = create<State>((set, get) => ({
   proposals: [],
   panelTab: 'tasks',
   limitWall: false,
+  allowanceVersion: 0,
   flyTo: null,
   selectedId: null,
   ctxMenu: null,
@@ -240,6 +245,7 @@ export const useStore = create<State>((set, get) => ({
     }),
   setPanelTab: (panelTab) => set({ panelTab }),
   setLimitWall: (limitWall) => set({ limitWall }),
+  allowanceChanged: () => set((s) => ({ allowanceVersion: s.allowanceVersion + 1 })),
   requestFlyTo: (frameId) => set({ flyTo: { frameId, at: Date.now() } }),
   select: (selectedId) => set({ selectedId }),
   openCtxMenu: (ctxMenu) => set({ ctxMenu }),

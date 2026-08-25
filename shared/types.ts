@@ -165,6 +165,8 @@ export interface AgentTask {
   auto?: boolean
   /** human who queued this as a board card */
   queuedBy?: string
+  /** account id of that human — decides which model credential runs the card */
+  queuedByUserId?: string
   claimedAt?: number
   /** unsuccessful agent attempt; failed work waits for an explicit human retry */
   failedAt?: number
@@ -189,6 +191,8 @@ export interface TaskFeedback {
   /** the resident agent this is routed to; unset = open to any agent */
   targetAgent?: string
   from: string
+  /** account id of the human who left it — decides which model credential runs it */
+  fromUserId?: string
   text: string
   at: number
   /** set once the feedback has been included in some agent's tool result */
@@ -214,6 +218,8 @@ export interface ElementComment {
   /** outerHTML excerpt of the element, for agent context and dead-anchor display */
   snippet: string
   from: string
+  /** account id of the human who left it — decides which model credential runs it */
+  fromUserId?: string
   text: string
   at: number
   /** true when the text @mentions a resident agent — that agent picks it up */
