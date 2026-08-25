@@ -24,7 +24,7 @@ You MUST call get_guide({ topic: "doop-instructions" }) once before using other 
 - Context first: call get_canvas before adding or editing frames.
 - Identity: pick an agent_name and reuse the SAME name on every call — your presence and edits are attributed live.
 - Narrate: call set_status with a one-line summary when you start a task and whenever your focus shifts — people watching the canvas see it live next to your name.
-- Creating: create_frame, then stream the design with append_frame_html in ~300–500 character chunks (start=true on the first, done=true on the last). Viewers watch you work.
+- Creating: create_frame, then stream the design with append_frame_html one complete section at a time (~1–4 KB chunks; start=true on the first, done=true on the last). Each chunk renders the moment it arrives — viewers watch you work.
 - Review: after every create or significant edit you MUST call get_frame_screenshot and fix what looks wrong before moving on.
 - Small edits: edit_frame_html (exact find/replace — the change morphs into the rendered frame in place). Full redesigns: set_frame_html or a new stream. Rename/move/resize: update_frame.
 - Images: real imagery makes designs. search_images finds stock photos (you SEE thumbnails and pick), search_icons finds 200k+ UI icons as hotlinkable SVGs, search_logos finds real company logos by brand name or domain, upload_asset stores your own file (remote file → source_url; local file → local_file=true, returns a curl command) and returns a permanent URL. Never inline images as data: URIs.
@@ -1002,7 +1002,7 @@ export function buildMcpServer(owner?: string, ownerId?: string): McpServer {
     'append_frame_html',
     {
       description:
-        'Stream a design into a frame chunk by chunk, so viewers watch it build up live — prefer this over set_frame_html when creating or reworking a whole design. Send the HTML in order, in chunks of roughly 200–600 characters (e.g. head/styles first, then section by section). Set start=true on the FIRST chunk (replaces any existing content and shows a live "designing…" badge) and done=true on the LAST chunk. Partial HTML renders progressively, so structure chunks to end at reasonable boundaries when you can.',
+        'Stream a design into a frame section by section — every chunk renders for viewers the moment it arrives, so they watch the design build up live. Prefer this over set_frame_html when creating or reworking a whole design. Send the HTML in document order, ONE complete section per call (head+styles first, then the hero, then each following section), roughly 1–4 KB per chunk. Set start=true on the FIRST chunk (replaces any existing content and shows a live "designing…" badge) and done=true on the LAST chunk. End chunks at element boundaries — partial HTML is healed, but a complete section paints cleanly.',
       inputSchema: {
         frame_id: z.string(),
         html_chunk: z

@@ -99,11 +99,13 @@ humans watching lose work they may have been reacting to.
 
 Viewers watch designs assemble live. Stream with append_frame_html:
 
-- ~300–500 characters per chunk, in document order.
+- ONE complete section per chunk, in document order: head+styles first, then the hero,
+  then each following section — roughly 1–4 KB each. Every chunk renders on the canvas
+  the moment it arrives, so each call should leave the frame in a sensible visual state.
 - start=true on the first chunk (clears the frame), done=true on the last.
-- Break at element boundaries when convenient. The server heals partial HTML either way
-  (closes an open <style>, trims a half-written tag, drops an unfinished <script>) and
-  paces the reveal smoothly for viewers, so never hold chunks back to "finish" something.
+- End chunks at element boundaries. If one lands mid-element anyway, the server heals it
+  (closes an open <style>, trims a half-written tag, drops an unfinished <script>), so
+  never hold a chunk back to "finish" something.
 - For small tweaks (copy, a color, one element's spacing) use edit_frame_html — an exact
   find/replace that morphs into the rendered frame in place, with no re-render. Resending
   a whole document via set_frame_html is for genuine redesigns.

@@ -754,29 +754,47 @@ export function retryCard(canvasId: string, cardId: string, by: string): AgentTa
 }
 
 /* ------------------------------------------------------------------ */
-/* Typewriter reveal: agent HTML lands in the store immediately, but   */
-/* viewers see it revealed at a steady rate so even one-shot updates   */
-/* play back as a live stream (à la paper.design).                     */
+/* Live rendering of agent writes.                                     */
+/*                                                                     */
+/* Streams (append_frame_html): every chunk broadcasts the moment it   */
+/* arrives — viewers track the agent's real progress with no artificial*/
+/* pacing. Stream state only carries the "designing…" badge, the       */
+/* escape latch, and a timeout for agents that never send done=true.   */
+/*                                                                     */
+/* One-shot writes (set_frame_html, agent create_frame with html) play */
+/* back as a short typewriter reveal so a paste reads as designing     */
+/* rather than blinking in — drained against a fixed deadline so       */
+/* playback time never grows with document size.                       */
 /* ------------------------------------------------------------------ */
 
-interface RevealState {
+interface StreamState {
   actor: Actor
-  /** how many chars of the frame's html are currently revealed to viewers */
-  shown: number
-  /** originated from append_frame_html (logs "finished designing" when done) */
-  isStream: boolean
-  /** the stream got its final chunk; finish once the reveal catches up */
-  pendingDone: boolean
   /** the opening chunk was HTML-escaped: decode every chunk of this stream */
   escaped: boolean
   lastActivity: number
 }
 
+const streams = new Map<string, StreamState>() // frameId -> state
+
+interface RevealState {
+  actor: Actor
+  /** how many chars of the frame's html are currently revealed to viewers */
+  shown: number
+  /** when the playback should have fully drained */
+  deadline: number
+}
+
 const reveals = new Map<string, RevealState>() // frameId -> state
 
 const TICK_MS = 80
-const MIN_CHARS_PER_TICK = 40 // ~500 chars/s floor
-const CATCHUP_TICKS = 100 // aim to catch up on a backlog within ~8s
+const REVEAL_MIN_MS = 2500 // even a tiny one-shot plays for a beat
+const REVEAL_MAX_MS = 5000 // even a huge one-shot lands within 5s
+const REVEAL_CHARS_PER_MS = 8
+const STREAM_IDLE_MS = 30_000
+
+function revealDuration(chars: number): number {
+  return Math.min(REVEAL_MAX_MS, Math.max(REVEAL_MIN_MS, chars / REVEAL_CHARS_PER_MS))
+}
 
 /** Make partially-revealed HTML paint sensibly. */
 export function healPartialHtml(html: string): string {
@@ -800,23 +818,34 @@ function commonPrefixLen(a: string, b: string): number {
   return i
 }
 
-function startReveal(frame: Frame, actor: Actor, shown: number, isStream: boolean) {
-  reveals.set(frame.id, { actor, shown, isStream, pendingDone: false, escaped: false, lastActivity: Date.now() })
+function startReveal(frame: Frame, actor: Actor, shown: number) {
+  reveals.set(frame.id, { actor, shown, deadline: Date.now() + revealDuration(frame.html.length - shown) })
   broadcast(frame.canvasId, { type: 'frame:streaming', frameId: frame.id, active: true, actor })
 }
 
-function finishReveal(frameId: string, logDone: boolean) {
+function finishReveal(frameId: string) {
   const r = reveals.get(frameId)
   if (!r) return
   reveals.delete(frameId)
   const frame = store.getFrame(frameId)
   if (!frame) return
   broadcast(frame.canvasId, { type: 'frame:streaming', frameId, active: false, actor: r.actor })
-  if (logDone) logActivity(frame.canvasId, r.actor, `finished designing “${frame.name}”`, frameId)
   endAutoTask(frame.canvasId, r.actor)
 }
 
+function finishStream(frameId: string, logDone: boolean) {
+  const s = streams.get(frameId)
+  if (!s) return
+  streams.delete(frameId)
+  const frame = store.getFrame(frameId)
+  if (!frame) return
+  broadcast(frame.canvasId, { type: 'frame:streaming', frameId, active: false, actor: s.actor })
+  if (logDone) logActivity(frame.canvasId, s.actor, `finished designing “${frame.name}”`, frameId)
+  endAutoTask(frame.canvasId, s.actor)
+}
+
 setInterval(() => {
+  const now = Date.now()
   for (const [frameId, r] of reveals) {
     const frame = store.getFrame(frameId)
     if (!frame) {
@@ -827,19 +856,20 @@ setInterval(() => {
     const remaining = total - r.shown
 
     if (remaining <= 0) {
-      if (r.pendingDone || !r.isStream) {
-        /* fully revealed and the source is done: emit the exact html and close */
-        broadcast(frame.canvasId, { type: 'frame:updated', frame, actor: r.actor })
-        finishReveal(frameId, r.isStream && r.pendingDone)
-      } else if (Date.now() - r.lastActivity > 30_000) {
-        finishReveal(frameId, false) // agent died mid-stream
-      }
+      /* fully revealed: emit the exact html and close */
+      broadcast(frame.canvasId, { type: 'frame:updated', frame, actor: r.actor })
+      finishReveal(frameId)
       continue
     }
 
-    r.shown = Math.min(total, r.shown + Math.max(MIN_CHARS_PER_TICK, Math.ceil(remaining / CATCHUP_TICKS)))
+    /* drain the rest evenly so the playback lands exactly at the deadline */
+    const ticksLeft = Math.max(1, Math.ceil((r.deadline - now) / TICK_MS))
+    r.shown = Math.min(total, r.shown + Math.ceil(remaining / ticksLeft))
     const partial = r.shown >= total ? frame.html : healPartialHtml(frame.html.slice(0, r.shown))
     broadcast(frame.canvasId, { type: 'frame:updated', frame: { ...frame, html: partial }, actor: r.actor })
+  }
+  for (const [frameId, s] of streams) {
+    if (now - s.lastActivity > STREAM_IDLE_MS) finishStream(frameId, false) // agent died mid-stream
   }
 }, TICK_MS)
 
@@ -852,25 +882,33 @@ export function appendFrameHtml(
   const before = store.getFrame(frameId)
   if (!before) return undefined
 
-  const starting = opts.start || !reveals.has(frameId)
+  const starting = opts.start || !streams.has(frameId)
   /* an agent that escapes its opening chunk escapes the whole stream, so latch
      the verdict there: a chunk mid-design can hold a legitimate `&lt;` (a code
      sample) and must never be sniffed on its own */
-  const escaped = starting ? looksEscapedHtml(chunk) : (reveals.get(frameId)?.escaped ?? false)
+  const escaped = starting ? looksEscapedHtml(chunk) : (streams.get(frameId)?.escaped ?? false)
   const piece = escaped ? decodeEscapedHtml(chunk) : chunk
   const html = opts.start ? piece : before.html + piece
   const frame = store.updateFrame(frameId, { html }, actor.name)!
 
   if (starting) {
-    /* animate from where the old content diverges (0 for a fresh start) */
-    startReveal(frame, actor, opts.start ? commonPrefixLen(before.html, html) : before.html.length, true)
+    finishReveal(frameId) /* a live stream overrides any one-shot playback in flight */
+    streams.set(frameId, { actor, escaped, lastActivity: Date.now() })
+    broadcast(frame.canvasId, { type: 'frame:streaming', frameId, active: true, actor })
     logActivity(frame.canvasId, actor, `is designing “${frame.name}” live…`, frameId)
     autoTask(frame.canvasId, actor, `Designing “${frame.name}”`)
   }
-  const r = reveals.get(frameId)!
-  r.lastActivity = Date.now()
-  r.escaped = escaped
-  if (opts.done) r.pendingDone = true
+  const s = streams.get(frameId)!
+  s.lastActivity = Date.now()
+  s.escaped = escaped
+
+  /* the chunk renders the moment it arrives — viewers see the agent's real progress */
+  broadcast(frame.canvasId, {
+    type: 'frame:updated',
+    frame: opts.done ? frame : { ...frame, html: healPartialHtml(frame.html) },
+    actor,
+  })
+  if (opts.done) finishStream(frameId, true)
 
   touch(frame.canvasId, actor, frameId)
   return frame
@@ -889,7 +927,7 @@ export function createFrame(
   if (actor.kind === 'agent' && frame.html.length > 0) {
     /* agent one-shot creation still plays back as a reveal */
     broadcast(canvasId, { type: 'frame:created', frame: { ...frame, html: '' }, actor })
-    startReveal(frame, actor, 0, false)
+    startReveal(frame, actor, 0)
     autoTask(canvasId, actor, `Designing “${frame.name}”`)
   } else {
     broadcast(canvasId, { type: 'frame:created', frame, actor })
@@ -912,29 +950,33 @@ export function updateFrame(
   const frame = store.updateFrame(frameId, patch, actor.name)!
 
   const htmlChanged = patch.html !== undefined && patch.html !== prevHtml
-  const openReveal = reveals.get(frameId)
-
   if (htmlChanged && actor.kind === 'agent') {
+    finishStream(frameId, false) /* a full replace ends an open append stream */
     const prefix = commonPrefixLen(prevHtml, frame.html)
     /* mostly-unchanged replace (small tweak): broadcast at once — the client
        morphs the live DOM in place, so a reveal would only add churn */
     const smallTweak = prefix >= frame.html.length * 0.5 && prefix >= prevHtml.length * 0.5
+    const openReveal = reveals.get(frameId)
     if (openReveal) {
+      /* new content mid-playback: rewind to the divergence and re-arm the deadline */
       openReveal.actor = actor
       openReveal.shown = Math.min(openReveal.shown, prefix)
-      openReveal.lastActivity = Date.now()
-      openReveal.pendingDone = true // a full replace ends an open stream
+      openReveal.deadline = Date.now() + revealDuration(frame.html.length - openReveal.shown)
     } else if (smallTweak) {
       broadcast(frame.canvasId, { type: 'frame:updated', frame, actor })
       logActivity(frame.canvasId, actor, `tweaked the design of “${frame.name}”`, frame.id)
       autoTask(frame.canvasId, actor, `Tweaking “${frame.name}”`)
     } else {
-      startReveal(frame, actor, prefix, false)
+      startReveal(frame, actor, prefix)
       logActivity(frame.canvasId, actor, `updated the design of “${frame.name}”`, frame.id)
       autoTask(frame.canvasId, actor, `Redesigning “${frame.name}”`)
     }
   } else {
-    if (htmlChanged && openReveal) finishReveal(frameId, false) /* a human takes over: cancel the reveal */
+    if (htmlChanged) {
+      /* a human takes over: cancel any live stream or playback */
+      finishStream(frameId, false)
+      finishReveal(frameId)
+    }
     broadcast(frame.canvasId, { type: 'frame:updated', frame, actor })
     if (htmlChanged) {
       logActivity(frame.canvasId, actor, `updated the design of “${frame.name}”`, frame.id)
@@ -948,7 +990,10 @@ export function updateFrame(
 }
 
 export function deleteFrame(frameId: string, actor: Actor): Frame | undefined {
-  reveals.delete(frameId)
+  /* close any live stream or playback while the frame still exists,
+     so their auto “Designing…” tasks end with it */
+  finishStream(frameId, false)
+  finishReveal(frameId)
   const frame = store.deleteFrame(frameId)
   if (!frame) return undefined
   broadcast(frame.canvasId, { type: 'frame:deleted', frameId, actor })
