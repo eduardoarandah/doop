@@ -1,51 +1,65 @@
-import { getBrowser } from './screenshot.ts'
+import { openIsolatedPage } from './screenshot.ts'
+import {
+  contextDevConfigured,
+  prepareContextHtmlForRendering,
+  scrapeContextSitemap,
+  scrapeContextWebsiteHtml,
+  type ContextWebsiteHtml,
+} from './contextDev.ts'
+import {
+  assertPublicNetworkUrl,
+  fetchPinnedPublicUrl,
+  guardPublicPageRequests,
+  normalizePublicHttpUrl,
+  parsePublicHttpUrl,
+} from './publicUrl.ts'
+import { navigateWebsitePage, WebsiteCaptureUnavailableError } from './websiteAccess.ts'
 
 /**
- * Website importer: discover a bounded set of same-site pages, or load one
- * URL in the shared Chromium and turn it into a self-contained frame. Scripts
- * are stripped from imported frames so they stay editable (WYSIWYG and the
- * agents both refuse script-bearing frames).
+ * Website importer: discover a bounded set of same-site pages, or acquire one
+ * rendered page and turn it into a self-contained frame. Context.dev performs
+ * remote acquisition when configured; local Chromium is the no-key fallback
+ * and always renders the passive snapshot. Scripts are stripped from imported
+ * frames so they stay editable (WYSIWYG and agents reject script-bearing frames).
  */
 
 const UA =
   'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0 Safari/537.36 DoopImporter/1.0'
 const VIEWPORT_WIDTH = 1280
 const MAX_HEIGHT = 6000
+const MAX_PREVIEW_HEIGHT = 4000
+const MAX_PREVIEW_TEXT_CHARS = 6000
 const MAX_SHEET_BYTES = 600_000
 const MAX_TOTAL_BYTES = 2_000_000
 const MAX_DISCOVERY_BYTES = 2_000_000
 const MAX_SITEMAPS = 12
 const DISCOVERY_CONCURRENCY = 6
+const MAX_CSS_IMPORTS = 16
 export const MAX_SITE_PAGES = 100
+
+const IMPORT_CSP = [
+  "default-src 'none'",
+  "script-src 'none'",
+  "connect-src 'none'",
+  "object-src 'none'",
+  "frame-src 'none'",
+  "worker-src 'none'",
+  "form-action 'none'",
+  "style-src 'unsafe-inline'",
+  'img-src data: blob: http: https:',
+  'font-src data: http: https:',
+  'media-src data: blob: http: https:',
+].join('; ')
 
 const NON_PAGE_EXTENSIONS =
   /\.(?:avif|bmp|css|csv|docx?|eot|gif|gz|ico|jpe?g|js|json|map|mov|mp3|mp4|mpeg|ogg|otf|pdf|png|pptx?|rar|rss|svg|tar|tiff?|txt|wav|webm|webp|woff2?|xlsx?|xml|zip)$/i
 
-/** Basic SSRF guard: public http(s) hosts only. */
-export function assertPublicHttpUrl(raw: string): URL {
-  let url: URL
-  try {
-    url = new URL(raw)
-  } catch {
-    throw new Error('not a valid URL')
-  }
-  if (url.protocol !== 'http:' && url.protocol !== 'https:') throw new Error('only http(s) URLs can be imported')
-  const h = url.hostname.toLowerCase()
-  const privateHost =
-    h === 'localhost' ||
-    h === '0.0.0.0' ||
-    h === '[::1]' ||
-    h === '::1' ||
-    h.endsWith('.local') ||
-    h.endsWith('.internal') ||
-    h.endsWith('.railway.internal') ||
-    /^127\./.test(h) ||
-    /^10\./.test(h) ||
-    /^192\.168\./.test(h) ||
-    /^169\.254\./.test(h) ||
-    /^172\.(1[6-9]|2\d|3[01])\./.test(h)
-  if (privateHost) throw new Error('that host cannot be imported')
-  return url
+/** Kept as the synchronous parser used by discovery and REST validation. All
+ *  actual network requests additionally use the DNS-aware async guard. */
+export const assertPublicHttpUrl = parsePublicHttpUrl
+
+export function normalizeImportUrl(raw: string): URL {
+  return normalizePublicHttpUrl(raw)
 }
 
 /** A website is scoped to one hostname and (when explicit) port. We allow an
@@ -164,14 +178,35 @@ interface TextResponse {
   contentType: string
 }
 
+/** Read decompressed response bytes with a hard cap instead of buffering an
+ *  untrusted chunked body before truncating it. */
+async function readTextBounded(response: Response, maxBytes: number): Promise<string | null> {
+  const declared = Number(response.headers.get('content-length') || 0)
+  if (declared > maxBytes || !response.body) return response.body ? null : ''
+  const reader = response.body.getReader()
+  const chunks: Uint8Array[] = []
+  let total = 0
+  for (;;) {
+    const { done, value } = await reader.read()
+    if (done) break
+    total += value.byteLength
+    if (total > maxBytes) {
+      await reader.cancel().catch(() => {})
+      return null
+    }
+    chunks.push(value)
+  }
+  return Buffer.concat(chunks).toString('utf8')
+}
+
 /** Follow redirects manually so every hop is re-checked before it is fetched. */
 async function fetchSiteText(rawUrl: string, site: URL, timeout = 8_000): Promise<TextResponse | null> {
-  let url = assertPublicHttpUrl(rawUrl)
+  let url = parsePublicHttpUrl(rawUrl)
   for (let redirects = 0; redirects <= 5; redirects++) {
     if (!isSameSiteUrl(url, site)) return null
     let res: Response
     try {
-      res = await fetch(url, {
+      res = await fetchPinnedPublicUrl(url, {
         redirect: 'manual',
         headers: { 'user-agent': UA, accept: 'text/html,application/xhtml+xml,application/xml,text/xml,*/*;q=0.1' },
         signal: AbortSignal.timeout(timeout),
@@ -183,16 +218,16 @@ async function fetchSiteText(rawUrl: string, site: URL, timeout = 8_000): Promis
       const location = res.headers.get('location')
       if (!location) return null
       try {
-        url = assertPublicHttpUrl(new URL(location, url).href)
+        url = parsePublicHttpUrl(new URL(location, url).href)
       } catch {
         return null
       }
       continue
     }
     if (!res.ok) return null
-    const declared = Number(res.headers.get('content-length') || 0)
-    if (declared > MAX_DISCOVERY_BYTES) return null
-    const text = (await res.text()).slice(0, MAX_DISCOVERY_BYTES)
+    if (res.headers.get('cf-mitigated')?.toLowerCase() === 'challenge') return null
+    const text = await readTextBounded(res, MAX_DISCOVERY_BYTES)
+    if (text === null) return null
     return { url, text, contentType: res.headers.get('content-type') ?? '' }
   }
   return null
@@ -237,27 +272,48 @@ export interface DiscoveredSite {
   truncated: boolean
 }
 
-/** Discover the homepage, sitemap entries, and recursively linked HTML pages.
- * The hard cap keeps an accidental calendar/archive crawl from becoming an
- * unbounded background job; the UI calls this out when it is reached. */
+/** Discover the homepage and sitemap entries. Without Context.dev, the local
+ * fallback also scans linked HTML pages recursively. The hard cap keeps an
+ * accidental calendar/archive crawl from becoming unbounded. */
 export async function discoverSitePages(rawUrl: string): Promise<DiscoveredSite> {
-  assertPublicHttpUrl(rawUrl)
-  const browser = await getBrowser()
-  const page = await browser.newPage()
+  const useContext = contextDevConfigured()
+  const requestedUrl = useContext ? normalizeImportUrl(rawUrl) : await assertPublicNetworkUrl(rawUrl)
   let seed: { url: URL; title: string; links: string[] }
-  try {
-    await page.setViewport({ width: VIEWPORT_WIDTH, height: 900 })
-    await page.setUserAgent(UA)
-    await page.goto(rawUrl, { waitUntil: 'domcontentloaded', timeout: 25_000 })
-    await new Promise((resolve) => setTimeout(resolve, 700))
-    const finalUrl = assertPublicHttpUrl(page.url())
-    const snapshot = await page.evaluate(() => ({
-      title: document.title,
-      links: Array.from(document.querySelectorAll<HTMLAnchorElement>('a[href]'), (a) => a.href),
-    }))
-    seed = { url: finalUrl, title: cleanTitle(snapshot.title), links: snapshot.links }
-  } finally {
-    await page.close().catch(() => {})
+  let contextSitemapUrls: string[] = []
+  if (useContext) {
+    const captured = await scrapeContextWebsiteHtml(requestedUrl.href)
+    const finalUrl = new URL(captured.finalUrl)
+    const parsed = parseHtmlPage(captured.html, finalUrl)
+    seed = { url: finalUrl, title: cleanTitle(captured.title || parsed.title), links: parsed.links }
+    try {
+      contextSitemapUrls = await scrapeContextSitemap(finalUrl.href, MAX_SITE_PAGES + 1)
+    } catch (error) {
+      /* A missing/inaccessible sitemap does not invalidate the rendered seed
+         page and the ordinary links Context already found there. */
+      if (!(error instanceof WebsiteCaptureUnavailableError)) throw error
+    }
+  } else {
+    const isolated = await openIsolatedPage()
+    const { page } = isolated
+    try {
+      await guardPublicPageRequests(page)
+      await page.setViewport({ width: VIEWPORT_WIDTH, height: 900 })
+      await page.setUserAgent(UA)
+      await navigateWebsitePage(
+        page,
+        requestedUrl.href,
+        { waitUntil: 'domcontentloaded', timeout: 25_000 },
+        { settleMs: 700 },
+      )
+      const finalUrl = await assertPublicNetworkUrl(page.url())
+      const snapshot = await page.evaluate(() => ({
+        title: document.title,
+        links: Array.from(document.querySelectorAll<HTMLAnchorElement>('a[href]'), (a) => a.href),
+      }))
+      seed = { url: finalUrl, title: cleanTitle(snapshot.title), links: snapshot.links }
+    } finally {
+      await isolated.close()
+    }
   }
 
   const pages = new Map<string, DiscoveredPage>()
@@ -281,26 +337,28 @@ export async function discoverSitePages(rawUrl: string): Promise<DiscoveredSite>
   add(`${seed.url.origin}/`)
   add(seed.url.href, seed.url, seed.title)
   for (const link of seed.links) add(link)
-  for (const link of await sitemapPages(seed.url)) add(link)
+  for (const link of useContext ? contextSitemapUrls : await sitemapPages(seed.url)) add(link)
 
   /* The rendered seed already gave us its links. Fetch the remaining pages
      in small batches to obtain titles and discover deeper static links. */
-  const scanned = new Set<string>([pageKey(seed.url)])
-  for (;;) {
-    const batch = [...pages.entries()].filter(([key]) => !scanned.has(key)).slice(0, DISCOVERY_CONCURRENCY)
-    if (!batch.length) break
-    batch.forEach(([key]) => scanned.add(key))
-    const results = await Promise.all(
-      batch.map(async ([key, found]) => ({ key, found, response: await fetchSiteText(found.url, seed.url) })),
-    )
-    for (const { key, found, response } of results) {
-      if (!response || (response.contentType && !/html|xhtml/i.test(response.contentType))) continue
-      const parsed = parseHtmlPage(response.text, response.url)
-      if (parsed.title) pages.get(key)!.title = parsed.title
-      for (const link of parsed.links) add(link, response.url)
-      /* Preserve the requested URL in the list; importPage follows the same
-         redirect and the label remains recognizable to the user. */
-      if (!pages.get(key)?.title) pages.get(key)!.title = fallbackTitle(new URL(found.url))
+  if (!useContext) {
+    const scanned = new Set<string>([pageKey(seed.url)])
+    for (;;) {
+      const batch = [...pages.entries()].filter(([key]) => !scanned.has(key)).slice(0, DISCOVERY_CONCURRENCY)
+      if (!batch.length) break
+      batch.forEach(([key]) => scanned.add(key))
+      const results = await Promise.all(
+        batch.map(async ([key, found]) => ({ key, found, response: await fetchSiteText(found.url, seed.url) })),
+      )
+      for (const { key, found, response } of results) {
+        if (!response || (response.contentType && !/html|xhtml/i.test(response.contentType))) continue
+        const parsed = parseHtmlPage(response.text, response.url)
+        if (parsed.title) pages.get(key)!.title = parsed.title
+        for (const link of parsed.links) add(link, response.url)
+        /* Preserve the requested URL in the list; importPage follows the same
+           redirect and the label remains recognizable to the user. */
+        if (!pages.get(key)?.title) pages.get(key)!.title = fallbackTitle(new URL(found.url))
+      }
     }
   }
 
@@ -337,42 +395,74 @@ export async function importSitePages(rawUrls: string[], concurrency = 3): Promi
   return results
 }
 
+interface CapturedCss {
+  css: string
+  complete: boolean
+}
+
 /** Fetch a stylesheet, resolve depth-1 @imports, absolutize its url() refs. */
-async function fetchCss(sheetUrl: string, depth = 0): Promise<string> {
-  if (depth > 1) return ''
+async function fetchCss(sheetUrl: string, depth = 0): Promise<CapturedCss> {
+  if (depth > 1) return { css: '', complete: false }
+  let url: URL
+  let res: Response | undefined
   let css: string
   try {
-    const res = await fetch(sheetUrl, {
-      headers: { 'user-agent': UA, accept: 'text/css,*/*;q=0.1' },
-      signal: AbortSignal.timeout(10_000),
-    })
-    if (!res.ok) return ''
-    css = await res.text()
-  } catch {
-    return ''
-  }
-  if (css.length > MAX_SHEET_BYTES) css = css.slice(0, MAX_SHEET_BYTES)
-
-  const imports = [...css.matchAll(/@import\s+(?:url\()?\s*['"]?([^'")\s]+)['"]?\s*\)?[^;]*;/g)]
-  for (const m of imports) {
-    let child = ''
-    try {
-      child = await fetchCss(new URL(m[1], sheetUrl).href, depth + 1)
-    } catch {
-      /* dead import */
+    url = parsePublicHttpUrl(sheetUrl)
+    for (let redirects = 0; redirects <= 5; redirects++) {
+      res = await fetchPinnedPublicUrl(url, {
+        redirect: 'manual',
+        headers: { 'user-agent': UA, accept: 'text/css,*/*;q=0.1' },
+        signal: AbortSignal.timeout(10_000),
+      })
+      if (res.status < 300 || res.status >= 400) break
+      const location = res.headers.get('location')
+      if (!location) return { css: '', complete: false }
+      url = parsePublicHttpUrl(new URL(location, url).href)
+      res = undefined
     }
-    css = css.replace(m[0], child)
+    if (!res?.ok) return { css: '', complete: false }
+    if (res.headers.get('cf-mitigated')?.toLowerCase() === 'challenge') return { css: '', complete: false }
+    const contentType = res.headers.get('content-type') ?? ''
+    if (contentType && !/text\/css|text\/plain|application\/octet-stream/i.test(contentType)) {
+      return { css: '', complete: false }
+    }
+    const bounded = await readTextBounded(res, MAX_SHEET_BYTES)
+    if (bounded === null) return { css: '', complete: false }
+    css = bounded
+  } catch {
+    return { css: '', complete: false }
+  }
+
+  let complete = true
+  const imports = [...css.matchAll(/@import\s+(?:url\()?\s*['"]?([^'")\s]+)['"]?\s*\)?[^;]*;/g)]
+  for (const [index, m] of imports.entries()) {
+    let child: CapturedCss = { css: '', complete: false }
+    if (index < MAX_CSS_IMPORTS) {
+      try {
+        child = await fetchCss(new URL(m[1], url).href, depth + 1)
+      } catch {
+        /* dead import */
+      }
+    }
+    if (!child.complete) complete = false
+    /* Imports beyond the bounded fetch budget are removed rather than left
+       active in the snapshot for a later browser to fetch. */
+    css = css.replace(m[0], child.css)
+    if (css.length > MAX_SHEET_BYTES) {
+      css = css.slice(0, MAX_SHEET_BYTES)
+      complete = false
+    }
   }
   /* relative url(...) inside the sheet must resolve against the SHEET's URL,
      not the document base */
   css = css.replace(/url\(\s*(['"]?)(?!data:|https?:|\/\/|#)([^'")]+)\1\s*\)/g, (_all, q, p) => {
     try {
-      return `url(${q}${new URL(p, sheetUrl).href}${q})`
+      return `url(${q}${new URL(p, url).href}${q})`
     } catch {
       return _all
     }
   })
-  return css
+  return { css, complete }
 }
 
 export interface ImportedPage {
@@ -380,18 +470,63 @@ export interface ImportedPage {
   width: number
   height: number
   html: string
+  /** Optional bounded visual/text result for agent-facing imports. The normal
+   *  UI importer omits this so multi-page imports do not retain many images. */
+  preview?: {
+    screenshot: Buffer
+    finalUrl: string
+    description: string
+    text: string
+    textTruncated: boolean
+    shotCropped: boolean
+    pageHeight: number
+  }
 }
 
-export async function importPage(rawUrl: string): Promise<ImportedPage> {
-  assertPublicHttpUrl(rawUrl)
-  const browser = await getBrowser()
-  const page = await browser.newPage()
+const IMPORT_SOURCE_META = 'doop-import-source'
+
+/** Identify snapshots created from a particular requested URL. The value is
+ *  encoded so an arbitrary query string cannot break the HTML attribute. */
+export function importedPageSource(html: string): string | undefined {
+  const encoded = html.match(
+    new RegExp(`<meta\\s+name=["']${IMPORT_SOURCE_META}["']\\s+content=["']([^"']+)["']`, 'i'),
+  )?.[1]
+  if (!encoded) return undefined
   try {
+    return decodeURIComponent(encoded)
+  } catch {
+    return undefined
+  }
+}
+
+export async function importPage(rawUrl: string, options: { includePreview?: boolean } = {}): Promise<ImportedPage> {
+  const requestedUrl = normalizeImportUrl(rawUrl)
+  let contextCapture: ContextWebsiteHtml | undefined
+  if (contextDevConfigured()) contextCapture = await scrapeContextWebsiteHtml(requestedUrl.href)
+  else await assertPublicNetworkUrl(requestedUrl)
+  const isolated = await openIsolatedPage()
+  const { page } = isolated
+  try {
+    await guardPublicPageRequests(page)
     await page.setViewport({ width: VIEWPORT_WIDTH, height: 900 })
     await page.setUserAgent(UA)
-    await page.goto(rawUrl, { waitUntil: 'networkidle2', timeout: 30_000 })
-    /* redirects can land somewhere private — re-check the final origin */
-    assertPublicHttpUrl(page.url())
+    if (contextCapture) {
+      /* Context already ran the site's JavaScript. Do not execute scripts a
+         second time when laying out its returned DOM for the editable frame. */
+      await page.setJavaScriptEnabled(false)
+      try {
+        await page.setContent(prepareContextHtmlForRendering(contextCapture.html, contextCapture.finalUrl), {
+          waitUntil: 'domcontentloaded',
+          timeout: 20_000,
+        })
+      } catch {
+        throw new WebsiteCaptureUnavailableError('Context.dev returned HTML that Doop could not render')
+      }
+    } else {
+      await navigateWebsitePage(page, requestedUrl.href, { waitUntil: 'networkidle2', timeout: 30_000 })
+      /* redirects can land somewhere private — re-check where Chromium landed */
+      await assertPublicNetworkUrl(page.url())
+    }
     /* walk the page before capturing: scroll-reveal animations and lazy
        images only materialize once their elements have been in view */
     await page.evaluate(async () => {
@@ -425,48 +560,169 @@ export async function importPage(rawUrl: string): Promise<ImportedPage> {
     await new Promise((r) => setTimeout(r, 600)) // late layout/lazy paint
 
     const snap = await page.evaluate((maxHeight: number) => {
-      for (const el of document.querySelectorAll('script, noscript, iframe')) el.remove()
+      for (const el of document.querySelectorAll(
+        'script, noscript, iframe, frame, frameset, object, embed, applet, portal, fencedframe',
+      ))
+        el.remove()
+      for (const meta of document.querySelectorAll<HTMLMetaElement>('meta[http-equiv]')) meta.remove()
+
+      /* A snapshot is passive HTML. Inline handlers and executable URL
+         schemes would otherwise run again inside the canvas iframe. */
+      const executableUrlAttributes = new Set(['action', 'formaction', 'href', 'poster', 'src', 'xlink:href'])
+      for (const el of document.querySelectorAll('*')) {
+        for (const attr of Array.from(el.attributes)) {
+          const name = attr.name.toLowerCase()
+          if (name.startsWith('on') || name === 'srcdoc' || name === 'ping') el.removeAttribute(attr.name)
+          else if (executableUrlAttributes.has(name) && /^\s*javascript:/i.test(attr.value)) {
+            el.removeAttribute(attr.name)
+          }
+        }
+      }
       const sheets: string[] = []
-      for (const l of document.querySelectorAll<HTMLLinkElement>('link[rel~="stylesheet"]')) {
-        if (l.href) sheets.push(l.href)
+      for (const l of document.querySelectorAll<HTMLLinkElement>('link')) {
+        if (
+          l.relList.contains('stylesheet') &&
+          l.href &&
+          !l.disabled &&
+          (!l.media || window.matchMedia(l.media).matches)
+        ) {
+          sheets.push(l.href)
+        }
         l.remove()
       }
-      for (const l of document.querySelectorAll('link[rel="preload"], link[rel="modulepreload"], base')) l.remove()
+      const baseUrl = document.baseURI
+      for (const base of document.querySelectorAll('base')) base.remove()
       return {
+        baseUrl,
         sheets,
         title: document.title,
         height: Math.min(Math.max(document.documentElement.scrollHeight, 400), maxHeight),
         html: document.documentElement.outerHTML,
       }
     }, MAX_HEIGHT)
-    const finalUrl = page.url()
 
     let css = ''
     for (const sheet of snap.sheets) {
-      css += (await fetchCss(sheet)) + '\n'
-      if (css.length > MAX_TOTAL_BYTES) break
+      const captured = await fetchCss(sheet)
+      if (!captured.complete) {
+        throw new WebsiteCaptureUnavailableError(
+          'The webpage HTML was captured, but one or more stylesheets could not be fully loaded',
+        )
+      }
+      if (css.length + captured.css.length + 1 > MAX_TOTAL_BYTES) {
+        throw new WebsiteCaptureUnavailableError('The webpage styles are too large to import safely')
+      }
+      css += captured.css + '\n'
+    }
+
+    /* Scrolling/lazy loading can trigger a delayed navigation. Re-check the
+       destination at the last possible moment and base the snapshot on it. */
+    const finalUrl = contextCapture ? contextCapture.finalUrl : (await assertPublicNetworkUrl(page.url())).href
+    let documentBase = finalUrl
+    try {
+      if (typeof snap.baseUrl === 'string') documentBase = parsePublicHttpUrl(snap.baseUrl).href
+    } catch {
+      /* Unsafe or malformed bases fall back to the already validated page URL. */
     }
 
     /* self-contained document: a base tag so in-document relative URLs
        (images, srcset) keep resolving, plus every stylesheet inlined */
     const inject =
-      `<base href="${finalUrl.replace(/"/g, '%22')}">` +
-      (css.trim() ? `<style data-doop-import>\n${css}\n</style>` : '')
+      `<meta name="${IMPORT_SOURCE_META}" content="${encodeURIComponent(requestedUrl.href)}">` +
+      `<meta http-equiv="Content-Security-Policy" content="${IMPORT_CSP}">` +
+      `<base href="${documentBase.replace(/&/g, '&amp;').replace(/"/g, '&quot;')}">` +
+      (css.trim() ? `<style data-doop-import>\n${css.replace(/<\/style/gi, '<\\/style')}\n</style>` : '')
     let html = snap.html
     const headMatch = html.match(/<head[^>]*>/i)
     if (headMatch) html = html.replace(headMatch[0], headMatch[0] + inject)
     else html = inject + html
     html = '<!doctype html>\n' + html
 
-    if (html.length > MAX_TOTAL_BYTES * 1.5) throw new Error('page too large to import')
+    if (html.length > MAX_TOTAL_BYTES * 1.5) {
+      throw new WebsiteCaptureUnavailableError('The captured webpage is too large to import safely')
+    }
+
+    let preview: ImportedPage['preview']
+    let renderedHeight = snap.height
+    if (options.includePreview) {
+      const previewIsolated = await openIsolatedPage()
+      const previewPage = previewIsolated.page
+      try {
+        /* Preview the exact passive artifact that will land on the canvas. This
+           avoids a second Context.dev screenshot request and keeps view_website
+           visually aligned with import_webpage. */
+        await guardPublicPageRequests(previewPage)
+        await previewPage.setViewport({ width: VIEWPORT_WIDTH, height: 900 })
+        await previewPage.setUserAgent(UA)
+        await previewPage.setJavaScriptEnabled(false)
+        try {
+          await previewPage.setContent(html, { waitUntil: 'load', timeout: 8_000 })
+        } catch {
+          /* Slow external images/fonts should not discard an otherwise usable
+             snapshot; capture whatever the isolated renderer completed. */
+        }
+        await new Promise((resolve) => setTimeout(resolve, 120))
+        const info = await previewPage.evaluate(() => {
+          const description = document.querySelector('meta[name="description"]')?.getAttribute('content')?.trim() ?? ''
+          const text = (document.body?.innerText ?? '').replace(/\n{3,}/g, '\n\n').trim()
+          const visualElements = Array.from(
+            document.querySelectorAll<HTMLElement | SVGElement>('img, video, svg, input, select'),
+          )
+          const hasVisualContent = visualElements.some((element) => {
+            const rect = element.getBoundingClientRect()
+            const style = getComputedStyle(element)
+            const visible =
+              rect.width >= 2 &&
+              rect.height >= 2 &&
+              style.display !== 'none' &&
+              style.visibility !== 'hidden' &&
+              style.opacity !== '0'
+            if (!visible) return false
+            if (element instanceof HTMLImageElement) return element.complete && element.naturalWidth > 0
+            if (element instanceof HTMLVideoElement) return element.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA
+            if (element instanceof SVGElement) return element.childElementCount > 0
+            return element instanceof HTMLInputElement || element instanceof HTMLSelectElement
+          })
+          return { description, text, hasVisualContent, pageHeight: document.documentElement.scrollHeight }
+        })
+        if (!info.text && !info.hasVisualContent) {
+          throw new WebsiteCaptureUnavailableError('The acquired webpage rendered empty')
+        }
+        renderedHeight = Math.min(Math.max(info.pageHeight, 400), MAX_HEIGHT)
+        const shotHeight = Math.min(Math.max(info.pageHeight, 400), MAX_PREVIEW_HEIGHT)
+        const screenshot = (await previewPage.screenshot({
+          type: 'jpeg',
+          quality: 80,
+          clip: { x: 0, y: 0, width: VIEWPORT_WIDTH, height: shotHeight },
+        })) as Buffer
+        preview = {
+          screenshot,
+          finalUrl,
+          description: info.description || contextCapture?.description || '',
+          text: info.text.slice(0, MAX_PREVIEW_TEXT_CHARS),
+          textTruncated: info.text.length > MAX_PREVIEW_TEXT_CHARS,
+          shotCropped: info.pageHeight > MAX_PREVIEW_HEIGHT,
+          pageHeight: info.pageHeight,
+        }
+      } catch (error) {
+        if (error instanceof WebsiteCaptureUnavailableError) throw error
+        throw new WebsiteCaptureUnavailableError('Doop could not render a local preview of the webpage')
+      } finally {
+        await previewIsolated.close()
+      }
+    }
 
     return {
-      title: snap.title || new URL(finalUrl).hostname,
+      title: snap.title || contextCapture?.title || new URL(finalUrl).hostname,
       width: VIEWPORT_WIDTH,
-      height: Math.round(snap.height),
+      height: Math.round(renderedHeight),
       html,
+      ...(preview ? { preview } : {}),
     }
+  } catch (error) {
+    if (error instanceof WebsiteCaptureUnavailableError) throw error
+    throw new WebsiteCaptureUnavailableError('Doop could not finish rendering the webpage HTML')
   } finally {
-    await page.close().catch(() => {})
+    await isolated.close()
   }
 }

@@ -1,6 +1,7 @@
 import fs from 'node:fs'
 import puppeteer, { type Browser, type Page } from 'puppeteer-core'
 import type { Frame } from '../shared/types.ts'
+import { guardPublicPageRequests } from './publicUrl.ts'
 
 /**
  * Render a frame's HTML in headless Chrome so agents can *see* their work.
@@ -44,6 +45,9 @@ export async function getBrowser(): Promise<Browser> {
     args: [
       '--no-first-run',
       '--disable-extensions',
+      '--disable-quic',
+      '--disable-webrtc-multiple-routes',
+      '--force-webrtc-ip-handling-policy=disable_non_proxied_udp',
       '--hide-scrollbars',
       /* containers: no user namespaces for the sandbox, tiny /dev/shm */
       ...(process.env.CHROME_NO_SANDBOX ? ['--no-sandbox', '--disable-dev-shm-usage'] : []),
@@ -52,26 +56,62 @@ export async function getBrowser(): Promise<Browser> {
   return browserPromise
 }
 
-async function loadFramePage(frame: Frame): Promise<Page> {
+export interface IsolatedPage {
+  page: Page
+  close: () => Promise<void>
+}
+
+/** External pages never share cookies, cache or service workers across users
+ *  or imports. Closing the wrapper tears down the entire browser context. */
+export async function openIsolatedPage(): Promise<IsolatedPage> {
   const browser = await getBrowser()
-  const page = await browser.newPage()
-  await page.setViewport({
-    width: Math.max(1, Math.round(frame.width)),
-    /* A viewport does not need to span an entire imported landing page for
-       layout/computed-style inspection; full-page content remains in the DOM. */
-    height: Math.max(1, Math.min(Math.round(frame.height), 4000)),
-    deviceScaleFactor: 1,
-  })
+  const context = await browser.createBrowserContext()
   try {
-    await page.setContent(frame.html || '<!doctype html><html><body></body></html>', {
-      waitUntil: 'load',
-      timeout: 8000,
-    })
-  } catch {
-    /* Slow external resources: inspect whatever has rendered. */
+    const page = await context.newPage()
+    let closed = false
+    return {
+      page,
+      close: async () => {
+        if (closed) return
+        closed = true
+        await context.close().catch(() => {})
+      },
+    }
+  } catch (error) {
+    await context.close().catch(() => {})
+    throw error
   }
-  await new Promise((resolve) => setTimeout(resolve, 120))
-  return page
+}
+
+async function loadFramePage(frame: Frame): Promise<IsolatedPage> {
+  const loaded = await openIsolatedPage()
+  const { page } = loaded
+  try {
+    const assetOrigin = new URL(process.env.BETTER_AUTH_URL || 'http://localhost:4300').origin
+    await guardPublicPageRequests(page, {
+      allowUrl: (url) => url.origin === assetOrigin && url.pathname.startsWith('/a/'),
+    })
+    await page.setViewport({
+      width: Math.max(1, Math.round(frame.width)),
+      /* A viewport does not need to span an entire imported landing page for
+         layout/computed-style inspection; full-page content remains in the DOM. */
+      height: Math.max(1, Math.min(Math.round(frame.height), 4000)),
+      deviceScaleFactor: 1,
+    })
+    try {
+      await page.setContent(frame.html || '<!doctype html><html><body></body></html>', {
+        waitUntil: 'load',
+        timeout: 8000,
+      })
+    } catch {
+      /* Slow external resources: inspect whatever has rendered. */
+    }
+    await new Promise((resolve) => setTimeout(resolve, 120))
+    return loaded
+  } catch (error) {
+    await loaded.close()
+    throw error
+  }
 }
 
 export interface FrameInspection {
@@ -98,7 +138,8 @@ export interface FrameInspection {
 /** A compact, rendered representation for agents. It intentionally relies on
  * visible text, semantics, geometry and computed styles rather than classes. */
 export async function inspectFrame(frame: Frame): Promise<FrameInspection> {
-  const page = await loadFramePage(frame)
+  const loaded = await loadFramePage(frame)
+  const { page } = loaded
   try {
     /* tsx/esbuild annotates nested functions with __name; page.evaluate
        serializes the callback without that runtime helper. A tiny in-page
@@ -291,7 +332,7 @@ export async function inspectFrame(frame: Frame): Promise<FrameInspection> {
       elements: inspection.elements,
     }
   } finally {
-    await page.close().catch(() => {})
+    await loaded.close()
   }
 }
 
@@ -301,7 +342,8 @@ export async function renderFrame(
   scale: number = 1,
   opts: { type?: 'png' | 'jpeg'; quality?: number; maxHeight?: number } = {},
 ): Promise<Buffer> {
-  const page = await loadFramePage(frame)
+  const loaded = await loadFramePage(frame)
+  const { page } = loaded
   try {
     await page.setViewport({
       width: Math.max(1, Math.round(frame.width)),
@@ -320,6 +362,6 @@ export async function renderFrame(
     })
     return Buffer.from(buf)
   } finally {
-    await page.close().catch(() => {})
+    await loaded.close()
   }
 }

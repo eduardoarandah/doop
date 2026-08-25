@@ -1,5 +1,84 @@
-import { describe, expect, it } from 'vitest'
-import { comparePageUrlsByDepth, normalizePageUrl, parseHtmlPage, parseSitemap } from '../server/importer.ts'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+
+const browserMocks = vi.hoisted(() => ({ openIsolatedPage: vi.fn() }))
+const contextMocks = vi.hoisted(() => ({ configured: vi.fn(), scrape: vi.fn(), sitemap: vi.fn() }))
+const publicUrlMocks = vi.hoisted(() => ({ fetchPinned: vi.fn() }))
+
+vi.mock('../server/screenshot.ts', () => ({ openIsolatedPage: browserMocks.openIsolatedPage }))
+vi.mock('../server/contextDev.ts', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../server/contextDev.ts')>()
+  return {
+    ...actual,
+    contextDevConfigured: contextMocks.configured,
+    scrapeContextSitemap: contextMocks.sitemap,
+    scrapeContextWebsiteHtml: contextMocks.scrape,
+  }
+})
+vi.mock('../server/publicUrl.ts', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../server/publicUrl.ts')>()
+  return {
+    ...actual,
+    assertPublicNetworkUrl: vi.fn(async (raw: string | URL) => actual.parsePublicHttpUrl(String(raw))),
+    fetchPinnedPublicUrl: publicUrlMocks.fetchPinned,
+    guardPublicPageRequests: vi.fn(async () => {}),
+  }
+})
+
+import {
+  comparePageUrlsByDepth,
+  discoverSitePages,
+  importPage,
+  importedPageSource,
+  normalizePageUrl,
+  parseHtmlPage,
+  parseSitemap,
+} from '../server/importer.ts'
+
+interface PageStubOptions {
+  finalUrl?: string
+  preview?: { description: string; text: string; pageHeight: number; hasVisualContent?: boolean }
+  screenshot?: Buffer
+  snapshot?: { baseUrl?: string; sheets: string[]; title: string; height: number; html: string }
+}
+
+function stubPage(options: PageStubOptions = {}) {
+  const finalUrl = options.finalUrl ?? 'https://example.com/final'
+  const mainFrame = {}
+  const evaluate = vi.fn().mockResolvedValueOnce(undefined)
+  evaluate.mockResolvedValueOnce(
+    options.snapshot ?? {
+      sheets: [],
+      title: 'Captured page',
+      height: 777,
+      html: '<html><head></head><body>Captured</body></html>',
+    },
+  )
+  if (options.preview) evaluate.mockResolvedValueOnce(options.preview)
+  const page = {
+    setViewport: vi.fn().mockResolvedValue(undefined),
+    setUserAgent: vi.fn().mockResolvedValue(undefined),
+    setJavaScriptEnabled: vi.fn().mockResolvedValue(undefined),
+    setContent: vi.fn().mockResolvedValue(undefined),
+    goto: vi.fn().mockResolvedValue(undefined),
+    mainFrame: vi.fn(() => mainFrame),
+    on: vi.fn().mockReturnThis(),
+    off: vi.fn().mockReturnThis(),
+    url: vi.fn(() => finalUrl),
+    evaluate,
+    screenshot: vi.fn().mockResolvedValue(options.screenshot ?? Buffer.from('jpeg')),
+    close: vi.fn().mockResolvedValue(undefined),
+  }
+  browserMocks.openIsolatedPage.mockResolvedValue({ page, close: page.close })
+  return page
+}
+
+beforeEach(() => {
+  browserMocks.openIsolatedPage.mockReset()
+  contextMocks.configured.mockReset().mockReturnValue(false)
+  contextMocks.scrape.mockReset()
+  contextMocks.sitemap.mockReset()
+  publicUrlMocks.fetchPinned.mockReset()
+})
 
 describe('website page discovery helpers', () => {
   const site = new URL('https://example.com/pricing')
@@ -57,5 +136,233 @@ describe('website page discovery helpers', () => {
       'https://example.com/blog/launch',
       'https://example.com/use-cases/education',
     ])
+  })
+
+  it('uses Context.dev HTML and sitemap discovery without crawling from Chromium when configured', async () => {
+    contextMocks.configured.mockReturnValue(true)
+    contextMocks.scrape.mockResolvedValue({
+      html: '<html><head><title>Fallback title</title></head><body><a href="/about">About</a><a href="https://other.example/out">Other</a></body></html>',
+      finalUrl: 'https://example.com/start',
+      title: 'Start here',
+      description: '',
+    })
+    contextMocks.sitemap.mockResolvedValue(['https://example.com/pricing', 'https://example.com/products/widget'])
+
+    const discovered = await discoverSitePages('https://example.com/original')
+
+    expect(contextMocks.scrape).toHaveBeenCalledWith('https://example.com/original')
+    expect(contextMocks.sitemap).toHaveBeenCalledWith('https://example.com/start', 101)
+    expect(browserMocks.openIsolatedPage).not.toHaveBeenCalled()
+    expect(discovered).toEqual({
+      siteUrl: 'https://example.com',
+      truncated: false,
+      pages: [
+        { url: 'https://example.com/', title: 'Home' },
+        { url: 'https://example.com/about', title: 'About' },
+        { url: 'https://example.com/pricing', title: 'Pricing' },
+        { url: 'https://example.com/start', title: 'Start here' },
+        { url: 'https://example.com/products/widget', title: 'Widget' },
+      ],
+    })
+  })
+})
+
+describe('webpage capture', () => {
+  it('uses direct Chromium for bare domains when Context.dev is not configured', async () => {
+    const page = stubPage()
+
+    const imported = await importPage('example.com/pricing')
+
+    expect(page.goto).toHaveBeenCalledWith('https://example.com/pricing', {
+      waitUntil: 'networkidle2',
+      timeout: 30_000,
+    })
+    expect(page.screenshot).not.toHaveBeenCalled()
+    expect(imported).not.toHaveProperty('preview')
+    expect(imported).toMatchObject({ title: 'Captured page', width: 1280, height: 777 })
+    expect(imported.html).toContain('<base href="https://example.com/final">')
+    expect(imported.html).toContain('Content-Security-Policy')
+    expect(importedPageSource(imported.html)).toBe('https://example.com/pricing')
+    expect(browserMocks.openIsolatedPage).toHaveBeenCalledOnce()
+    expect(page.close).toHaveBeenCalledOnce()
+  })
+
+  it('uses Context.dev HTML without navigating Chromium when configured', async () => {
+    contextMocks.configured.mockReturnValue(true)
+    contextMocks.scrape.mockResolvedValue({
+      html: '<!doctype html><html><head><base href="/assets/"></head><body>From Context</body></html>',
+      finalUrl: 'https://www.example.com/redirected',
+      title: 'Context title',
+      description: 'Context description',
+    })
+    const page = stubPage({
+      finalUrl: 'about:blank',
+      snapshot: {
+        baseUrl: 'https://www.example.com/assets/',
+        sheets: [],
+        title: 'Captured page',
+        height: 777,
+        html: '<html><head></head><body>Captured</body></html>',
+      },
+    })
+
+    const imported = await importPage('example.com/pricing')
+
+    expect(contextMocks.scrape).toHaveBeenCalledWith('https://example.com/pricing')
+    expect(page.goto).not.toHaveBeenCalled()
+    expect(page.setJavaScriptEnabled).toHaveBeenCalledWith(false)
+    expect(page.setContent).toHaveBeenCalledWith(
+      expect.stringContaining('<base href="https://www.example.com/assets/">'),
+      { waitUntil: 'domcontentloaded', timeout: 20_000 },
+    )
+    expect(imported.html).toContain('<base href="https://www.example.com/assets/">')
+    expect(importedPageSource(imported.html)).toBe('https://example.com/pricing')
+    expect(page.close).toHaveBeenCalledOnce()
+  })
+
+  it('does not retry through Chromium when configured Context.dev fails', async () => {
+    contextMocks.configured.mockReturnValue(true)
+    contextMocks.scrape.mockRejectedValue(new Error('Context.dev unavailable'))
+
+    await expect(importPage('https://example.com')).rejects.toThrow('Context.dev unavailable')
+
+    expect(browserMocks.openIsolatedPage).not.toHaveBeenCalled()
+  })
+
+  it('rejects captured HTML when every external stylesheet is blocked', async () => {
+    contextMocks.configured.mockReturnValue(true)
+    contextMocks.scrape.mockResolvedValue({
+      html: '<!doctype html><html><head><link rel="stylesheet" href="/app.css"></head><body>From Context</body></html>',
+      finalUrl: 'https://example.com/final',
+      title: 'Context title',
+      description: '',
+    })
+    publicUrlMocks.fetchPinned.mockResolvedValue(
+      new Response('<html>challenge</html>', { headers: { 'content-type': 'text/html' } }),
+    )
+    const page = stubPage({
+      finalUrl: 'about:blank',
+      snapshot: {
+        sheets: ['https://example.com/app.css'],
+        title: 'Context title',
+        height: 777,
+        html: '<html><head></head><body>From Context</body></html>',
+      },
+    })
+
+    await expect(importPage('https://example.com')).rejects.toThrow('stylesheets could not be fully loaded')
+
+    expect(publicUrlMocks.fetchPinned).toHaveBeenCalledWith(
+      new URL('https://example.com/app.css'),
+      expect.objectContaining({ redirect: 'manual' }),
+    )
+    expect(page.close).toHaveBeenCalledOnce()
+  })
+
+  it('rejects a partial stylesheet capture instead of accepting a materially unstyled page', async () => {
+    contextMocks.configured.mockReturnValue(true)
+    contextMocks.scrape.mockResolvedValue({
+      html: '<html><head></head><body>From Context</body></html>',
+      finalUrl: 'https://example.com/final',
+      title: 'Context title',
+      description: '',
+    })
+    publicUrlMocks.fetchPinned
+      .mockResolvedValueOnce(
+        new Response('html { box-sizing: border-box }', { headers: { 'content-type': 'text/css' } }),
+      )
+      .mockResolvedValueOnce(
+        new Response('<html>challenge</html>', { status: 403, headers: { 'content-type': 'text/html' } }),
+      )
+    const page = stubPage({
+      finalUrl: 'about:blank',
+      snapshot: {
+        sheets: ['https://example.com/reset.css', 'https://example.com/app.css'],
+        title: 'Context title',
+        height: 777,
+        html: '<html><head></head><body>From Context</body></html>',
+      },
+    })
+
+    await expect(importPage('https://example.com')).rejects.toThrow('stylesheets could not be fully loaded')
+
+    expect(publicUrlMocks.fetchPinned).toHaveBeenCalledTimes(2)
+    expect(page.close).toHaveBeenCalledOnce()
+  })
+
+  it('returns a bounded screenshot and text preview when requested', async () => {
+    const screenshot = Buffer.from('agent-preview')
+    const page = stubPage({
+      finalUrl: 'https://www.example.com/redirected',
+      preview: {
+        description: 'A real product page',
+        text: 'x'.repeat(6_005),
+        pageHeight: 9_000,
+      },
+      screenshot,
+    })
+
+    const imported = await importPage('https://example.com', { includePreview: true })
+
+    expect(page.screenshot).toHaveBeenCalledWith({
+      type: 'jpeg',
+      quality: 80,
+      clip: { x: 0, y: 0, width: 1280, height: 4_000 },
+    })
+    expect(imported.preview).toEqual({
+      screenshot,
+      finalUrl: 'https://www.example.com/redirected',
+      description: 'A real product page',
+      text: 'x'.repeat(6_000),
+      textTruncated: true,
+      shotCropped: true,
+      pageHeight: 9_000,
+    })
+    expect(browserMocks.openIsolatedPage).toHaveBeenCalledTimes(2)
+    expect(page.close).toHaveBeenCalledTimes(2)
+  })
+
+  it('renders the Context.dev HTML locally for the agent preview', async () => {
+    contextMocks.configured.mockReturnValue(true)
+    contextMocks.scrape.mockResolvedValue({
+      html: '<!doctype html><html><head></head><body>From Context</body></html>',
+      finalUrl: 'https://example.com/final',
+      title: 'Context title',
+      description: 'Context description',
+    })
+    const screenshot = Buffer.from('local-preview')
+    const page = stubPage({
+      finalUrl: 'about:blank',
+      preview: { description: '', text: 'Rendered Context page', pageHeight: 700 },
+      screenshot,
+    })
+
+    const imported = await importPage('https://example.com', { includePreview: true })
+
+    expect(contextMocks.scrape).toHaveBeenCalledOnce()
+    expect(page.goto).not.toHaveBeenCalled()
+    expect(page.screenshot).toHaveBeenCalledOnce()
+    expect(imported.preview).toMatchObject({
+      screenshot,
+      finalUrl: 'https://example.com/final',
+      description: 'Context description',
+      text: 'Rendered Context page',
+    })
+    expect(browserMocks.openIsolatedPage).toHaveBeenCalledTimes(2)
+    expect(page.close).toHaveBeenCalledTimes(2)
+  })
+
+  it('returns a capture error when the acquired HTML renders no visible content', async () => {
+    const page = stubPage({
+      preview: { description: '', text: '', hasVisualContent: false, pageHeight: 400 },
+    })
+
+    await expect(importPage('https://example.com', { includePreview: true })).rejects.toThrow(
+      'The acquired webpage rendered empty',
+    )
+
+    expect(page.screenshot).not.toHaveBeenCalled()
+    expect(browserMocks.openIsolatedPage).toHaveBeenCalledTimes(2)
+    expect(page.close).toHaveBeenCalledTimes(2)
   })
 })

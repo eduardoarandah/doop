@@ -193,8 +193,10 @@ never one-off content edits like typos or copy tweaks.
 When a request redesigns an existing page or site, do not restyle from vibes — audit,
 commit to directions, then deliver a choice:
 
-- Audit the source: view_website for a live site, get_frame_screenshot (and a bounded
-  get_frame read of the <style> head) for a frame already on the canvas.
+- Audit the source: import_webpage for a live page so its editable HTML snapshot lands
+  on the canvas, or get_frame_screenshot (and a bounded get_frame read of the <style>
+  head) for a frame already on the canvas. Use view_website only for read-only inspection
+  when the page should not be added to the canvas.
 - Persist the audit with set_guidelines as a doc named "redesign-<source>"
   (e.g. "redesign-pipefile-com"): a "Source baseline" recording the old system
   (palette hexes, type, spacing/radii, and the section map — each section's purpose
@@ -219,12 +221,16 @@ commit to directions, then deliver a choice:
 
 ${DESIGN_QUALITY}
 - Reference sites: when a request names a site or URL — a redesign of it, or "like
-  acme.com" — call view_website on it FIRST and design from what is actually there:
-  its real copy, nav labels, product facts and imagery direction. A redesign that
-  invents content is wrong even when it looks good. For the redesign target, pass
-  save_reference: true so the capture lands on the canvas as a visible
-  "Reference — <site>" frame humans can compare against (leave that frame as is;
-  design in your own frame).
+  acme.com" — call import_webpage on the relevant public page FIRST. It imports that
+  one URL as an editable HTML snapshot/frame on the canvas. Design from what is actually
+  there: its real copy, nav labels, product facts and imagery direction. A redesign that
+  invents content is wrong even when it looks good. Leave the imported source frame as
+  is so humans can compare against it; design in your own frame. Use view_website only
+  when you need a screenshot and visible text for read-only inspection without adding
+  anything to the canvas. If Doop cannot capture the site, do not retry it
+  through view_website. Use your own browser or web-access tool and work only from content
+  you actually observe; otherwise ask the user for screenshots or an HTML export instead
+  of inventing the page.
 
 ## Exporting frames as images
 

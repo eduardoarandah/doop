@@ -292,6 +292,9 @@ Then tell the agent something like:
 
 Screenshots render in your system Chrome/Chromium via `puppeteer-core` (set `CHROME_PATH` if it isn't
 auto-detected). Humans can hit the same renderer at `GET /api/frames/:id/screenshot.png?scale=2`.
+For website viewing/imports, setting `CONTEXT_DEV_API_KEY` makes Context.dev acquire the rendered
+HTML while Doop still sanitizes it and renders the preview locally; without the key, Doop navigates
+to the public page directly in Chromium.
 
 ### How streaming looks (server-side smoothing)
 
@@ -329,6 +332,8 @@ Steering happens at three layers (the same architecture paper.design uses, plus 
 | `list_canvases`        | List all canvases                                                                                                   |
 | `create_canvas`        | Create a canvas, returns its shareable id                                                                           |
 | `get_canvas`           | Canvas layout: every frame's position/size/meta                                                                     |
+| `view_website`         | Inspect one public page read-only; returns a desktop screenshot and visible text without changing the canvas        |
+| `import_webpage`       | Import one public URL onto a canvas as an editable HTML snapshot/frame                                              |
 | `create_frame`         | Add a frame with HTML (auto-placed if no x/y)                                                                       |
 | `get_frame`            | Read a frame including its HTML                                                                                     |
 | `get_frame_screenshot` | Render the frame headlessly and return a PNG — lets agents _see_ and iterate on their design                        |

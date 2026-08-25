@@ -12,7 +12,10 @@ import { DOOP_GUIDE, GUIDE_TOPICS } from './guide.ts'
 import { ESCAPED_HTML_NOTE, looksEscapedHtml } from './escapedHtml.ts'
 import * as assets from './assets.ts'
 import * as imageSearch from './imageSearch.ts'
-import { viewWebsite, saveWebsiteReferenceFrame } from './website.ts'
+import { viewWebsite } from './website.ts'
+import { createImportedWebpageFrame } from './webpageImport.ts'
+import { normalizeImportUrl } from './importer.ts'
+import { websiteAccessErrorMessage } from './websiteAccess.ts'
 
 const INSTRUCTIONS = `Doop is a shared multiplayer design canvas: humans and AI agents design together in real time. Canvases contain frames — artboards that render complete HTML documents live for everyone viewing.
 
@@ -25,6 +28,7 @@ You MUST call get_guide({ topic: "doop-instructions" }) once before using other 
 - Review: after every create or significant edit you MUST call get_frame_screenshot and fix what looks wrong before moving on.
 - Small edits: edit_frame_html (exact find/replace — the change morphs into the rendered frame in place). Full redesigns: set_frame_html or a new stream. Rename/move/resize: update_frame.
 - Images: real imagery makes designs. search_images finds stock photos (you SEE thumbnails and pick), search_icons finds 200k+ UI icons as hotlinkable SVGs, search_logos finds real company logos by brand name or domain, upload_asset stores your own file (remote file → source_url; local file → local_file=true, returns a curl command) and returns a permanent URL. Never inline images as data: URIs.
+- Websites: when a request names an existing site or URL — a redesign of it, or "like acme.com" — call import_webpage FIRST so an editable HTML snapshot lands on the canvas. Leave that source frame unchanged and design in a separate frame. view_website is only for read-only inspection when the page should not be added. If Doop cannot capture the site, do not retry with view_website because it uses the same capture path. Use your own browser or web tool and work only from content you actually observe; if that is unavailable, ask the user for screenshots or an HTML export rather than inventing content.
 - Feedback: humans reply to your tasks; their notes arrive inside your tool results as HUMAN FEEDBACK blocks — address them before continuing.
 - Guidelines: canvases can carry named style guides (brand rules, style recipes). get_canvas lists them with one-line summaries — read the relevant ones with get_guidelines BEFORE designing and follow them.
 - Memory: canvases can also carry pinned style references — exemplar designs humans marked as "more like this". get_canvas lists them; read the relevant one with get_reference and match its look. When your human gives you design feedback in conversation and you address it, record it with save_decision so the canvas remembers their taste.`
@@ -123,6 +127,11 @@ const UPLOADS_PER_MIN = 15
 /* photo search burns the shared Pexels quota (200 req/hour on the free tier) */
 const searchHits = new Map<string, number[]>()
 const SEARCHES_PER_MIN = 12
+
+/* importing writes a potentially large HTML frame, so keep it at the same
+   conservative per-user rate as the browser UI's import endpoint */
+const importHits = new Map<string, number[]>()
+const IMPORTS_PER_MIN = 5
 
 const agentName = z
   .string()
@@ -836,20 +845,16 @@ export function buildMcpServer(owner?: string, ownerId?: string): McpServer {
   server.registerTool(
     'view_website',
     {
-      title: 'View a live website',
+      title: 'View a website',
       description:
-        'Load a public web page in a headless browser and SEE it: a desktop screenshot plus the page\'s visible text. Use it whenever a request references an existing site or URL — a redesign of it, or "like acme.com" — and design from the real copy, structure and branding instead of inventing content. Set save_reference to also pin the capture to the canvas as a visible "Reference — <site>" frame, so humans see the source next to the redesign (recommended for redesign targets).',
+        'Read-only inspection of a public web page: acquires its current HTML and returns a locally rendered desktop screenshot plus visible text without changing the canvas. Use it to study real copy, structure and branding. When the page should appear on the canvas as an editable source frame, use import_webpage instead.',
+      annotations: { readOnlyHint: true, openWorldHint: true },
       inputSchema: {
         url: z.string().describe('The page URL — a bare domain like "acme.io" is loaded over https'),
-        canvas_id: z.string().optional().describe('The canvas you are designing on — required for save_reference'),
-        save_reference: z
-          .boolean()
-          .optional()
-          .describe('Pin the capture to the canvas as a reference frame everyone can see'),
         agent_name: agentName,
       },
     },
-    async ({ url, canvas_id, save_reference, agent_name }) => {
+    async ({ url, agent_name }) => {
       const now = Date.now()
       const limitKey = ownerId ?? agent_name
       const hits = (searchHits.get(limitKey) ?? []).filter((t) => now - t < 60_000)
@@ -858,14 +863,6 @@ export function buildMcpServer(owner?: string, ownerId?: string): McpServer {
       searchHits.set(limitKey, hits)
       try {
         const site = await viewWebsite(url)
-        let referenceNote = ''
-        if (save_reference) {
-          if (!canvas_id) return err('save_reference needs canvas_id')
-          if (!canvasFor(canvas_id)) return noCanvas(canvas_id)
-          const ref = await saveWebsiteReferenceFrame(canvas_id, actorFrom(agent_name), site)
-          if (ref)
-            referenceNote = `\n\nSaved to the canvas as reference frame ${ref.id} ("${ref.name}") — leave that frame as is and build your design in a separate frame.`
-        }
         const result = {
           content: [
             { type: 'image' as const, data: site.screenshot.toString('base64'), mimeType: 'image/jpeg' },
@@ -877,14 +874,87 @@ export function buildMcpServer(owner?: string, ownerId?: string): McpServer {
                 (site.shotCropped
                   ? `\nNote: the page is ${site.pageHeight}px tall — the screenshot shows only the top portion.`
                   : '') +
-                `\n\nVisible page text${site.textTruncated ? ' (truncated)' : ''}:\n${site.text}` +
-                referenceNote,
+                `\n\nVisible page text${site.textTruncated ? ' (truncated)' : ''}:\n${site.text}`,
             },
           ],
         }
-        return canvas_id ? withFeedback(result, canvas_id, actorFrom(agent_name)) : result
+        return result
       } catch (e) {
-        return err(e instanceof Error ? e.message : 'website view failed')
+        return err(
+          websiteAccessErrorMessage(e, 'connected-agent') ?? (e instanceof Error ? e.message : 'website view failed'),
+        )
+      }
+    },
+  )
+
+  server.registerTool(
+    'import_webpage',
+    {
+      title: 'Import an editable webpage',
+      description:
+        'Import ONE public webpage into a canvas as an editable HTML snapshot. The rendered DOM is captured, scripts/iframes are removed, stylesheets are inlined, and the resulting source frame appears on the canvas for comparison or editing. Use this when a referenced or redesign-target page should be visible to everyone; leave the imported source frame unchanged and make the new design in a separate frame. For inspection without changing the canvas, use view_website.',
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
+      inputSchema: {
+        url: z.string().describe('The page URL — a bare domain like "acme.io" is loaded over https'),
+        canvas_id: z.string().describe('Canvas that should receive the imported source frame'),
+        agent_name: agentName,
+      },
+    },
+    async ({ url, canvas_id, agent_name }) => {
+      if (!canvasFor(canvas_id)) return noCanvas(canvas_id)
+      let normalizedUrl: string
+      try {
+        normalizedUrl = normalizeImportUrl(url).href
+      } catch (e) {
+        return err(e instanceof Error ? e.message : 'invalid webpage URL')
+      }
+      const now = Date.now()
+      const limitKey = ownerId ?? agent_name
+      const hits = (importHits.get(limitKey) ?? []).filter((t) => now - t < 60_000)
+      if (hits.length >= IMPORTS_PER_MIN) return err('webpage import rate limit — wait a minute')
+      hits.push(now)
+      importHits.set(limitKey, hits)
+      try {
+        const actor = actorFrom(agent_name)
+        const { imported, frame } = await createImportedWebpageFrame({
+          canvasId: canvas_id,
+          url: normalizedUrl,
+          actor,
+          includePreview: true,
+        })
+        if (!frame) return noCanvas(canvas_id)
+
+        const preview = imported.preview
+        const content: Array<{ type: 'image'; data: string; mimeType: string } | { type: 'text'; text: string }> = []
+        if (preview) {
+          content.push({ type: 'image', data: preview.screenshot.toString('base64'), mimeType: 'image/jpeg' })
+        }
+        content.push({
+          type: 'text',
+          text:
+            JSON.stringify(
+              {
+                ok: true,
+                frame: frameSummary(frame),
+                source_url: preview?.finalUrl ?? normalizedUrl,
+                snapshot: 'editable HTML; scripts, iframes and noscript content removed; linked stylesheets inlined',
+              },
+              null,
+              2,
+            ) +
+            (preview?.description ? `\nMeta description: ${preview.description}` : '') +
+            (preview?.shotCropped
+              ? `\nThe source page is ${preview.pageHeight}px tall; the preview shows its top 4000px.`
+              : '') +
+            (preview ? `\n\nVisible source text${preview.textTruncated ? ' (truncated)' : ''}:\n${preview.text}` : '') +
+            '\n\nThe editable snapshot is now on the canvas. If it is source material for a separate design, leave it unchanged; if the import itself is the requested deliverable, it is ready to use or edit.',
+        })
+        const result = { content }
+        return withStatusNudge(withFeedback(result, canvas_id, actor), canvas_id, actor)
+      } catch (e) {
+        return err(
+          websiteAccessErrorMessage(e, 'connected-agent') ?? (e instanceof Error ? e.message : 'webpage import failed'),
+        )
       }
     },
   )

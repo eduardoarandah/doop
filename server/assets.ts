@@ -134,10 +134,10 @@ export async function getAsset(id: string): Promise<{ meta: AssetMeta; buf: Buff
 /** Fetch a remote image through the SSRF guard, validating every redirect
  *  hop, with a hard size cap enforced while streaming. */
 export async function fetchRemote(rawUrl: string): Promise<Buffer> {
-  const { assertPublicHttpUrl } = await import('./importer.ts')
-  let url = assertPublicHttpUrl(rawUrl)
+  const { fetchPinnedPublicUrl, parsePublicHttpUrl } = await import('./publicUrl.ts')
+  let url = parsePublicHttpUrl(rawUrl)
   for (let hop = 0; hop < 4; hop++) {
-    const res = await fetch(url, {
+    const res = await fetchPinnedPublicUrl(url, {
       redirect: 'manual',
       headers: { accept: 'image/*,*/*;q=0.8', 'user-agent': 'DoopAssets/1.0' },
       signal: AbortSignal.timeout(20_000),
@@ -145,7 +145,7 @@ export async function fetchRemote(rawUrl: string): Promise<Buffer> {
     if (res.status >= 300 && res.status < 400) {
       const loc = res.headers.get('location')
       if (!loc) throw new Error('redirect without a location')
-      url = assertPublicHttpUrl(new URL(loc, url).href)
+      url = parsePublicHttpUrl(new URL(loc, url).href)
       continue
     }
     if (!res.ok) throw new Error(`fetch failed: HTTP ${res.status}`)
