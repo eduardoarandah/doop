@@ -142,6 +142,95 @@ describe('design sync ingest', () => {
     expect(list[0].lastUsedAt).toBeGreaterThan(0)
   })
 
+  it('captures the flow map: link hotspots and traversal counts between frames', async () => {
+    const post = (body: unknown) =>
+      fetch(`${BASE}/ingest/${secret}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      })
+    /* snapshot with links: one to a synced page, one to a page nobody visited */
+    const res = await post({
+      page: '/orders/:id',
+      title: 'Orders',
+      html: SNAPSHOT('three'),
+      links: [
+        { to: '/settings', x: 40, y: 60, w: 120, h: 32, label: 'Settings' },
+        { to: '/nowhere', x: 10, y: 10, w: 50, h: 20 },
+      ],
+      edges: [
+        { from: '/orders/:id', to: '/settings' },
+        { from: '/orders/:id', to: '/settings' },
+      ],
+    })
+    expect(res.status).toBe(200)
+    /* an unchanged screen can still flush navigations on their own */
+    const slim = await (await post({ page: '/settings', edges: [{ from: '/settings', to: '/orders/:id' }] })).json()
+    expect(slim).toEqual({ ok: true, edges: 1 })
+
+    const canvas = await (await owner.get(`/api/canvases/${canvasId}`)).json()
+    const frames = canvas.frames as { name: string; id: string }[]
+    const orders = frames.find((f) => f.name === 'Orders')!.id
+    const settings = frames.find((f) => f.name !== 'Orders')!.id
+
+    const flow = await (await owner.get(`/api/canvases/${canvasId}/sync-flow`)).json()
+    expect(flow.links).toHaveLength(1) // the /nowhere link has no frame to point at
+    expect(flow.links[0]).toMatchObject({
+      fromFrameId: orders,
+      toFrameId: settings,
+      x: 40,
+      y: 60,
+      width: 120,
+      height: 32,
+      label: 'Settings',
+    })
+    expect(flow.edges).toHaveLength(2)
+    const counts = Object.fromEntries(
+      flow.edges.map((e: { fromFrameId: string; count: number }) => [e.fromFrameId, e.count]),
+    )
+    expect(counts[orders]).toBe(2)
+    expect(counts[settings]).toBe(1)
+
+    /* an unchanged snapshot still refreshes hotspots — the first capture from
+       a link-reporting snippet version arrives with identical HTML */
+    const replay = await (
+      await post({
+        page: '/orders/:id',
+        title: 'Orders',
+        html: SNAPSHOT('three'),
+        links: [{ to: '/settings', x: 8, y: 16, w: 90, h: 24, label: 'Go' }],
+      })
+    ).json()
+    expect(replay.unchanged).toBe(true)
+    const flow2 = await (await owner.get(`/api/canvases/${canvasId}/sync-flow`)).json()
+    expect(flow2.links).toHaveLength(1)
+    expect(flow2.links[0]).toMatchObject({ x: 8, y: 16, width: 90, height: 24, label: 'Go' })
+  })
+
+  it('marks recorded edges in a response header; the rate-limit 429 omits it', async () => {
+    /* the snippet requeues its edge batch unless X-Doop-Edges proves the
+       server stored it — the per-key rate limit fires before recording */
+    const canvas = await (await owner.post('/api/canvases', { name: 'Rate limited' })).json()
+    const key = await (await owner.post(`/api/canvases/${canvas.id}/sync-keys`, { name: 'burst' })).json()
+    const post = () =>
+      fetch(`${BASE}/ingest/${key.secret}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ page: '/a', edges: [{ from: '/a', to: '/b' }] }),
+      })
+    const first = await post()
+    expect(first.status).toBe(200)
+    expect(first.headers.get('x-doop-edges')).toBe('1')
+    expect(first.headers.get('access-control-expose-headers')).toContain('X-Doop-Edges')
+    let limited: Response | null = null
+    for (let i = 0; i < 32 && !limited; i++) {
+      const res = await post()
+      if (res.status === 429) limited = res
+    }
+    expect(limited).not.toBeNull()
+    expect(limited!.headers.get('x-doop-edges')).toBeNull() // not recorded — snippet must retry
+  })
+
   it('rejects malformed payloads', async () => {
     const post = (body: unknown) =>
       fetch(`${BASE}/ingest/${secret}`, {

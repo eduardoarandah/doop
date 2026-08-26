@@ -22,6 +22,21 @@ export interface SyncKeyInfo {
   frames: number
 }
 
+/** The flow map of a canvas's synced app(s): link hotspots between frames
+ *  and how often users actually navigated each pair. */
+export interface SyncFlow {
+  links: {
+    fromFrameId: string
+    toFrameId: string
+    x: number
+    y: number
+    width: number
+    height: number
+    label: string | null
+  }[]
+  edges: { fromFrameId: string; toFrameId: string; count: number; lastAt: number }[]
+}
+
 export interface DiscoveredPage {
   url: string
   title: string
@@ -135,6 +150,7 @@ export const api = {
     req<SyncKeyInfo>(`/api/canvases/${canvasId}/sync-keys`, { method: 'POST', body: JSON.stringify({ name }) }),
   deleteSyncKey: (canvasId: string, keyId: string) =>
     req(`/api/canvases/${canvasId}/sync-keys/${keyId}`, { method: 'DELETE' }),
+  syncFlow: (canvasId: string) => req<SyncFlow>(`/api/canvases/${canvasId}/sync-flow`),
   guidelineHistory: (canvasId: string, name: string) =>
     req<{ markdown: string; savedAt: number; savedBy: string }[]>(
       `/api/canvases/${canvasId}/guidelines/${encodeURIComponent(name)}/history`,

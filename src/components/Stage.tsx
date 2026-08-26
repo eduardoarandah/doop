@@ -3,6 +3,7 @@ import { useStore } from '../lib/store'
 import { sendWs } from '../lib/ws'
 import { throttle } from '../lib/throttle'
 import { FrameView } from './FrameView'
+import { FlowOverlay } from './FlowOverlay'
 import { GhostFrames } from './GhostFrames'
 import { Cursors } from './Cursors'
 import { SnapGuides } from './SnapGuides'
@@ -274,6 +275,7 @@ export function Stage({ onAddFrame }: { onAddFrame: () => void }) {
             <FrameView key={f.id} frame={f} raster={raster} />
           ))}
           <GhostFrames />
+          <FlowOverlay />
           <SnapGuides />
           <Cursors />
         </div>

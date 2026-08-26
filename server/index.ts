@@ -818,6 +818,14 @@ app.post('/api/canvases/:id/sync-keys', async (req, res) => {
   res.json({ ...key, frames: 0 })
 })
 
+/* the flow map is design insight, not a credential — anyone who can see the
+   frames can see how they connect */
+app.get('/api/canvases/:id/sync-flow', async (req, res) => {
+  const c = requireCanvas(req, res, req.params.id)
+  if (!c) return
+  res.json(await ingest.getSyncFlow(c))
+})
+
 app.delete('/api/canvases/:id/sync-keys/:keyId', async (req, res) => {
   if (!requireDurableCanvas(req, res, req.params.id)) return
   if (!(await ingest.deleteSyncKey(req.params.id, req.params.keyId)))

@@ -73,6 +73,38 @@ export const syncKeys = pgTable(
   (t) => [index('sync_keys_canvas_idx').on(t.canvasId), index('sync_keys_secret_idx').on(t.secret)],
 )
 
+/** Link hotspots a synced page declares: where each same-app link sits in the
+ *  snapshot and which page it leads to. Replaced wholesale on every capture
+ *  of that page — the set mirrors the CURRENT design, it is not history. */
+export const syncLinks = pgTable(
+  'sync_links',
+  {
+    keyId: text('key_id').notNull(),
+    page: text('page').notNull(),
+    toPage: text('to_page').notNull(),
+    x: doublePrecision('x').notNull(),
+    y: doublePrecision('y').notNull(),
+    width: doublePrecision('width').notNull(),
+    height: doublePrecision('height').notNull(),
+    label: text('label'),
+  },
+  (t) => [index('sync_links_page_idx').on(t.keyId, t.page)],
+)
+
+/** Navigations users actually made in the synced app, accumulated per route
+ *  pair — the traffic weights on top of the declared link map. */
+export const syncEdges = pgTable(
+  'sync_edges',
+  {
+    keyId: text('key_id').notNull(),
+    fromPage: text('from_page').notNull(),
+    toPage: text('to_page').notNull(),
+    count: integer('count').notNull().default(0),
+    lastAt: bigint('last_at', { mode: 'number' }).notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.keyId, t.fromPage, t.toPage] })],
+)
+
 export const tasks = pgTable(
   'tasks',
   {

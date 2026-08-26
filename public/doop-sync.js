@@ -69,8 +69,8 @@
 
   /* One frame per SCREEN, not per record: normalize id-looking path segments
      so /orders/8231 and /orders/9007 land on the same frame. */
-  function routeKey() {
-    var segs = location.pathname.split('/').map(function (seg) {
+  function routeKey(pathname) {
+    var segs = (pathname === undefined ? location.pathname : pathname).split('/').map(function (seg) {
       if (!seg) return seg
       if (/^\d+$/.test(seg)) return ':id'
       if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(seg)) return ':id'
@@ -281,14 +281,62 @@
     })
   }
 
+  /* ---- flow map: which link sits where, and where people actually went */
+
+  /* Same-app link hotspots visible on this screen, in document coordinates —
+     doop draws them as connectors between the synced frames. */
+  function collectLinks(page) {
+    var out = []
+    var anchors = document.querySelectorAll('a[href]')
+    for (var i = 0; i < anchors.length && out.length < 100; i++) {
+      var a = anchors[i]
+      var abs = absUrl(a.getAttribute('href'))
+      if (!abs || !isSameOrigin(abs)) continue
+      var to
+      try {
+        to = routeKey(new URL(abs).pathname)
+      } catch (e) {
+        continue
+      }
+      if (to === page) continue
+      var rect = a.getBoundingClientRect()
+      if (rect.width < 2 || rect.height < 2) continue
+      out.push({
+        to: to,
+        x: rect.left + window.scrollX,
+        y: rect.top + window.scrollY,
+        w: rect.width,
+        h: rect.height,
+        label: (a.getAttribute('aria-label') || a.textContent || '').trim().slice(0, 60),
+      })
+    }
+    return out
+  }
+
+  /* Navigations users make are the traffic weights on the link map. Edges
+     ride along on the next upload; an unchanged screen flushes them alone. */
+  var lastPage = routeKey()
+  var pendingEdges = []
+  function recordNav() {
+    var now = routeKey()
+    if (now !== lastPage) {
+      if (pendingEdges.length < 20) pendingEdges.push({ from: lastPage, to: now })
+      lastPage = now
+    }
+  }
+
   function hash(s) {
     var h = 5381
     for (var i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) | 0
     return String(h)
   }
 
+  /* CAPTURE_VERSION invalidates the dedup when the capture format changes —
+     an upgraded snippet must re-upload screens whose HTML alone is unchanged
+     (e.g. to populate the flow map's link hotspots). */
+  var CAPTURE_VERSION = '2'
   function memoKey(page) {
-    return '__doopSync:' + KEY.slice(-6) + ':' + page
+    return '__doopSync:' + CAPTURE_VERSION + ':' + KEY.slice(-6) + ':' + page
   }
 
   function shouldSend(page, h) {
@@ -307,6 +355,7 @@
     if (capturing) return
     capturing = true
     var page = routeKey()
+    var edges = []
     /* Promise.resolve().then keeps a synchronous throw inside serialize on
        the promise chain — it must hit the catch below, or `capturing` wedges
        shut and every later capture silently no-ops. */
@@ -321,7 +370,23 @@
           return
         }
         var h = hash(html)
-        if (!force && !shouldSend(page, h)) return
+        edges = pendingEdges.splice(0, 20)
+        if (!force && !shouldSend(page, h)) {
+          if (!edges.length) return
+          /* screen unchanged — flush just the navigations */
+          return fetch(ENDPOINT, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            keepalive: true,
+            body: JSON.stringify({ page: page, edges: edges }),
+          }).then(function (r) {
+            /* only the server's explicit marker proves the edges were stored:
+               its rate-limit 429 fires before recording (requeue), while the
+               page-throttle 429 fires after (requeue would double-count) */
+            if (r.headers.get('X-Doop-Edges') !== null) edges = []
+            if (!r.ok) throw new Error('sync ' + r.status)
+          })
+        }
         try {
           localStorage.setItem(memoKey(page), JSON.stringify({ h: h, t: Date.now() }))
         } catch (e) {
@@ -338,16 +403,21 @@
             width: window.innerWidth,
             height: Math.min(document.documentElement.scrollHeight, 8000),
             html: html,
+            links: collectLinks(page),
+            edges: edges,
           }),
         }).then(function (r) {
+          if (r.headers.get('X-Doop-Edges') !== null) edges = [] // recorded server-side — see above
           if (!r.ok) throw new Error('sync ' + r.status)
         })
       })
       ['catch'](function (err) {
-        /* never break the host app over a sync error — but log it, and drop
-           the memo so the next scheduled capture retries instead of skipping */
+        /* never break the host app over a sync error — but log it, drop the
+           memo so the next scheduled capture retries instead of skipping,
+           and put the drained navigations back so counts don't under-report */
         console.warn('[doop-sync] capture failed', err)
         capturing = false
+        if (edges.length) pendingEdges = edges.concat(pendingEdges).slice(0, 20)
         try {
           localStorage.removeItem(memoKey(page))
         } catch (e2) {
@@ -371,16 +441,19 @@
   var push = history.pushState
   history.pushState = function () {
     var out = push.apply(this, arguments)
+    recordNav()
     schedule()
     return out
   }
   var replace = history.replaceState
   history.replaceState = function () {
     var out = replace.apply(this, arguments)
+    recordNav()
     schedule()
     return out
   }
   window.addEventListener('popstate', function () {
+    recordNav()
     schedule()
   })
 

@@ -2508,6 +2508,36 @@ textarea {
 
 /* ---------- ghost frames: where a working agent's design will land ---------- */
 
+/* design-sync flow map: connectors from a selected synced frame's link
+   hotspots to the frames those links navigate to */
+.flow-overlay {
+  position: absolute;
+  pointer-events: none;
+  overflow: visible;
+  z-index: 6;
+  color: var(--accent-ink, #e5533c);
+}
+.flow-hotspot {
+  fill: rgba(229, 83, 60, 0.08);
+  stroke: currentColor;
+  stroke-width: 1.5;
+  stroke-dasharray: 4 3;
+}
+.flow-line {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  opacity: 0.75;
+}
+.flow-count {
+  font-size: 13px;
+  font-weight: 600;
+  fill: currentColor;
+  paint-order: stroke;
+  stroke: var(--surface, #fff);
+  stroke-width: 4;
+}
+
 .ghost-frame {
   position: absolute;
   pointer-events: none;

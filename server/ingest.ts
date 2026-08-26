@@ -1,8 +1,8 @@
 import type express from 'express'
 import { nanoid } from 'nanoid'
-import { and, desc, eq } from 'drizzle-orm'
+import { and, desc, eq, inArray, sql } from 'drizzle-orm'
 import { db } from './db/index.ts'
-import { syncKeys } from './db/schema.ts'
+import { syncEdges, syncKeys, syncLinks } from './db/schema.ts'
 import { store } from './store.ts'
 import * as actions from './actions.ts'
 import type { Frame } from '../shared/types.ts'
@@ -55,6 +55,14 @@ export async function deleteSyncKey(canvasId: string, id: string): Promise<boole
     .delete(syncKeys)
     .where(and(eq(syncKeys.id, id), eq(syncKeys.canvasId, canvasId)))
     .returning({ id: syncKeys.id })
+  if (gone.length) {
+    db.delete(syncLinks)
+      .where(eq(syncLinks.keyId, id))
+      .catch((err: unknown) => console.error('[ingest] link cleanup failed', err))
+    db.delete(syncEdges)
+      .where(eq(syncEdges.keyId, id))
+      .catch((err: unknown) => console.error('[ingest] edge cleanup failed', err))
+  }
   return gone.length > 0
 }
 
@@ -160,6 +168,8 @@ export function setIngestCors(res: express.Response) {
   res.set('Access-Control-Allow-Origin', '*')
   res.set('Access-Control-Allow-Methods', 'POST, OPTIONS')
   res.set('Access-Control-Allow-Headers', 'Content-Type')
+  /* the snippet reads this to know its edge batch was recorded (see below) */
+  res.set('Access-Control-Expose-Headers', 'X-Doop-Edges')
   res.set('Access-Control-Max-Age', '86400')
   /* Chrome Private Network Access: a page on a public origin posting to a
      doop on localhost/an intranet host needs this opt-in on the preflight —
@@ -175,6 +185,92 @@ function cleanPage(raw: unknown): string | null {
   return page
 }
 
+/* ---- flow map: which button leads where, and where users actually went.
+   The snippet sends `links` (same-app link hotspots found in the snapshot,
+   replaced per capture) and `edges` (navigations since the last upload,
+   accumulated). Together they draw the app's information architecture as
+   connectors between synced frames. */
+
+interface SyncLinkInput {
+  to: string
+  x: number
+  y: number
+  width: number
+  height: number
+  label?: string
+}
+
+const MAX_LINKS = 120
+const MAX_EDGES = 20
+
+function cleanLinks(raw: unknown, page: string): SyncLinkInput[] {
+  if (!Array.isArray(raw)) return []
+  const links: SyncLinkInput[] = []
+  for (const item of raw.slice(0, MAX_LINKS)) {
+    const to = cleanPage((item as Record<string, unknown>)?.to)
+    const { x, y, w, h, label } = (item ?? {}) as Record<string, unknown>
+    if (!to || to === page) continue
+    const nums = [x, y, w, h].map(Number)
+    if (nums.some((n) => !Number.isFinite(n)) || nums[2]! <= 0 || nums[3]! <= 0) continue
+    links.push({
+      to,
+      x: nums[0]!,
+      y: nums[1]!,
+      width: nums[2]!,
+      height: nums[3]!,
+      label: typeof label === 'string' && label.trim() ? label.trim().slice(0, 60) : undefined,
+    })
+  }
+  return links
+}
+
+/* Both writers are awaited on the ingest path so a flow read right after an
+   upload sees the data — but a storage hiccup must not fail the sync. */
+async function saveLinks(keyId: string, page: string, links: SyncLinkInput[]) {
+  try {
+    await db.delete(syncLinks).where(and(eq(syncLinks.keyId, keyId), eq(syncLinks.page, page)))
+    if (links.length) {
+      await db.insert(syncLinks).values(
+        links.map((l) => ({
+          keyId,
+          page,
+          toPage: l.to,
+          x: l.x,
+          y: l.y,
+          width: l.width,
+          height: l.height,
+          label: l.label ?? null,
+        })),
+      )
+    }
+  } catch (err) {
+    console.error('[ingest] link write failed', err)
+  }
+}
+
+async function recordEdges(keyId: string, raw: unknown): Promise<number> {
+  if (!Array.isArray(raw)) return 0
+  let recorded = 0
+  for (const item of raw.slice(0, MAX_EDGES)) {
+    const from = cleanPage((item as Record<string, unknown>)?.from)
+    const to = cleanPage((item as Record<string, unknown>)?.to)
+    if (!from || !to || from === to) continue
+    recorded++
+    try {
+      await db
+        .insert(syncEdges)
+        .values({ keyId, fromPage: from, toPage: to, count: 1, lastAt: Date.now() })
+        .onConflictDoUpdate({
+          target: [syncEdges.keyId, syncEdges.fromPage, syncEdges.toPage],
+          set: { count: sql`${syncEdges.count} + 1`, lastAt: Date.now() },
+        })
+    } catch (err) {
+      console.error('[ingest] edge write failed', err)
+    }
+  }
+  return recorded
+}
+
 export async function handleIngest(req: express.Request, res: express.Response) {
   setIngestCors(res)
   const secret = String(req.params.key ?? '')
@@ -186,15 +282,32 @@ export async function handleIngest(req: express.Request, res: express.Response) 
 
   const page = cleanPage(req.body?.page)
   const html = typeof req.body?.html === 'string' ? req.body.html : ''
-  if (!page || !html.trim()) return res.status(400).json({ error: 'page (a rooted path) and html are required' })
-  if (html.length > MAX_SNAPSHOT_BYTES) {
-    return res.status(413).json({ error: 'snapshot exceeds the 2.5 MB limit — mask or exclude heavy content' })
-  }
+  if (!page) return res.status(400).json({ error: 'page (a rooted path) is required' })
 
   if (!takeIngestSlot(key.id)) {
     res.set('Retry-After', '60')
     return res.status(429).json({ error: 'sync rate limit — slow down' })
   }
+
+  const edgesRecorded = await recordEdges(key.id, req.body?.edges)
+  /* From here on, edges from this request are in the database — every
+     response (including the page-throttle 429 below) carries this marker so
+     the snippet knows not to requeue them. The rate-limit 429 above returns
+     WITHOUT it: those edges were never recorded and the snippet must retry. */
+  res.set('X-Doop-Edges', String(edgesRecorded))
+
+  /* Edge-only flush: an unchanged screen has nothing to upload, but the
+     navigations that happened on it are still worth keeping. */
+  if (!html.trim()) {
+    if (!edgesRecorded) return res.status(400).json({ error: 'html (or edges) required' })
+    return res.json({ ok: true, edges: edgesRecorded })
+  }
+  if (html.length > MAX_SNAPSHOT_BYTES) {
+    return res.status(413).json({ error: 'snapshot exceeds the 2.5 MB limit — mask or exclude heavy content' })
+  }
+  /* hotspots persist only once the frame write they describe lands (below) —
+     a 429'd snapshot must not leave coordinates for content nobody sees */
+  const links = cleanLinks(req.body?.links, page)
 
   let baseUrl: string | undefined
   try {
@@ -219,7 +332,12 @@ export async function handleIngest(req: express.Request, res: express.Response) 
   const mine = canvas.frames.filter((f) => syncFrameMarker(f.html)?.startsWith(`${key.id}/`))
   const existing = mine.find((f) => syncFrameMarker(f.html) === marker)
   if (existing) {
-    if (existing.html === wrapped) return res.json({ ok: true, frameId: existing.id, unchanged: true })
+    if (existing.html === wrapped) {
+      /* content matches, but this capture may still carry fresher hotspots —
+         e.g. the first upload from a snippet version that reports links */
+      await saveLinks(key.id, page, links)
+      return res.json({ ok: true, frameId: existing.id, unchanged: true })
+    }
     const last = pageLastWrite.get(marker) ?? 0
     if (Date.now() - last < PAGE_MIN_INTERVAL_MS) {
       res.set('Retry-After', String(Math.ceil((PAGE_MIN_INTERVAL_MS - (Date.now() - last)) / 1000)))
@@ -228,6 +346,7 @@ export async function handleIngest(req: express.Request, res: express.Response) 
     pageLastWrite.set(marker, Date.now())
     /* geometry the user may have arranged stays; content and height track the app */
     actions.updateFrame(existing.id, { html: wrapped, name: title.slice(0, 80), height }, actor)
+    await saveLinks(key.id, page, links)
     return res.json({ ok: true, frameId: existing.id, updated: true })
   }
 
@@ -246,10 +365,63 @@ export async function handleIngest(req: express.Request, res: express.Response) 
   pageLastWrite.set(marker, Date.now())
   const frame = actions.createFrame(canvas.id, { name: title.slice(0, 80), x, y, width, height, html: wrapped }, actor)
   if (!frame) return res.status(410).json({ error: 'canvas vanished mid-sync' })
+  await saveLinks(key.id, page, links)
   res.json({ ok: true, frameId: frame.id, created: true })
 }
 
 /** Frames synced by a key, for the share modal's per-key screen count. */
 export function syncedFrameCount(canvas: { frames: Frame[] }, keyId: string): number {
   return canvas.frames.filter((f) => syncFrameMarker(f.html)?.startsWith(`${keyId}/`)).length
+}
+
+export interface SyncFlowLink {
+  fromFrameId: string
+  toFrameId: string
+  x: number
+  y: number
+  width: number
+  height: number
+  label: string | null
+}
+
+export interface SyncFlowEdge {
+  fromFrameId: string
+  toFrameId: string
+  count: number
+  lastAt: number
+}
+
+/** The canvas's flow map: declared link hotspots and traversal counts, with
+ *  pages resolved to the frames that carry their marker. Links to pages no
+ *  one has visited yet have no frame to point at and are dropped. */
+export async function getSyncFlow(canvas: {
+  frames: Frame[]
+}): Promise<{ links: SyncFlowLink[]; edges: SyncFlowEdge[] }> {
+  const frameByMarker = new Map<string, string>()
+  for (const f of canvas.frames) {
+    const marker = syncFrameMarker(f.html)
+    if (marker) frameByMarker.set(marker, f.id)
+  }
+  const keyIds = [...new Set([...frameByMarker.keys()].map((m) => m.slice(0, m.indexOf('/'))))].filter(Boolean)
+  if (!keyIds.length) return { links: [], edges: [] }
+
+  const [linkRows, edgeRows] = await Promise.all([
+    db.select().from(syncLinks).where(inArray(syncLinks.keyId, keyIds)),
+    db.select().from(syncEdges).where(inArray(syncEdges.keyId, keyIds)),
+  ])
+  const links: SyncFlowLink[] = []
+  for (const row of linkRows) {
+    const fromFrameId = frameByMarker.get(`${row.keyId}${row.page}`)
+    const toFrameId = frameByMarker.get(`${row.keyId}${row.toPage}`)
+    if (!fromFrameId || !toFrameId) continue
+    links.push({ fromFrameId, toFrameId, x: row.x, y: row.y, width: row.width, height: row.height, label: row.label })
+  }
+  const edges: SyncFlowEdge[] = []
+  for (const row of edgeRows) {
+    const fromFrameId = frameByMarker.get(`${row.keyId}${row.fromPage}`)
+    const toFrameId = frameByMarker.get(`${row.keyId}${row.toPage}`)
+    if (!fromFrameId || !toFrameId) continue
+    edges.push({ fromFrameId, toFrameId, count: row.count, lastAt: row.lastAt })
+  }
+  return { links, edges }
 }
