@@ -51,6 +51,28 @@ export const frames = pgTable(
   (t) => [index('frames_canvas_idx').on(t.canvasId)],
 )
 
+/** Design-sync keys: the write-only capability behind the /ingest endpoint.
+ *  An app embeds the doop-sync snippet with a key's secret, and its live
+ *  screens land on ONE canvas as frames — the secret grants no reads and no
+ *  other writes, so shipping it in an internal app's bundle is safe. `id` is
+ *  the public handle (stamped into synced frame HTML to match page → frame);
+ *  the secret never appears in canvas content. Cold path: read per ingest
+ *  request, no in-memory mirror. Revocation = row deletion. */
+export const syncKeys = pgTable(
+  'sync_keys',
+  {
+    id: text('id').primaryKey(),
+    secret: text('secret').notNull(),
+    canvasId: text('canvas_id').notNull(),
+    /** label shown in the share modal and used as the frames' actor name */
+    name: text('name').notNull(),
+    createdBy: text('created_by').notNull(),
+    createdAt: bigint('created_at', { mode: 'number' }).notNull(),
+    lastUsedAt: bigint('last_used_at', { mode: 'number' }),
+  },
+  (t) => [index('sync_keys_canvas_idx').on(t.canvasId), index('sync_keys_secret_idx').on(t.secret)],
+)
+
 export const tasks = pgTable(
   'tasks',
   {

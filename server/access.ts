@@ -29,3 +29,12 @@ export function canAccessCanvas(userId: string | undefined, canvas: Canvas): boo
   if (canvas.memberIds?.includes(userId)) return true
   return canvas.linkAccess === 'edit'
 }
+
+/** Durable access only: the owner and invited members — NOT link-edit
+ *  visitors. Gates anything that would outlive the visit itself, like
+ *  design-sync keys: a bearer secret minted or read through a share link
+ *  would keep writing frames long after the owner turns the link off. */
+export function hasDurableCanvasAccess(userId: string | undefined, canvas: Canvas): boolean {
+  if (!userId || !canvas.ownerId) return false
+  return canvas.ownerId === userId || !!canvas.memberIds?.includes(userId)
+}

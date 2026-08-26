@@ -29,6 +29,25 @@ export default tseslint.config(
       '@typescript-eslint/no-namespace': ['error', { allowDeclarations: true }],
     },
   },
+  {
+    /* the embeddable snippet: plain browser JS shipped as-is, no bundling —
+       ES5-flavoured on purpose so it runs wherever the host app does */
+    files: ['public/**/*.js'],
+    languageOptions: {
+      globals: Object.fromEntries(
+        (
+          'window document location history localStorage fetch console setTimeout clearTimeout ' +
+          'matchMedia URL JSON Date Math FileReader Promise'
+        )
+          .split(' ')
+          .map((g) => [g, 'readonly']),
+      ),
+    },
+    rules: {
+      '@typescript-eslint/no-unused-expressions': 'off',
+      '@typescript-eslint/no-unused-vars': ['error', { caughtErrors: 'none' }],
+    },
+  },
   /* must be last: silence stylistic rules that would fight prettier */
   prettier,
 )

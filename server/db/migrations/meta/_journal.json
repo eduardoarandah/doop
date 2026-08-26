@@ -29,6 +29,13 @@
       "when": 1787637526171,
       "tag": "0003_motionless_colossus",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1787764855067,
+      "tag": "0004_design_sync_keys",
+      "breakpoints": true
     }
   ]
 }

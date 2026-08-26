@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useStore } from '../lib/store'
 import { connect, disconnect, sendWs } from '../lib/ws'
-import { api, ApiError, type CanvasMember, type DiscoveredSite } from '../lib/api'
+import { api, ApiError, type CanvasMember, type DiscoveredSite, type SyncKeyInfo } from '../lib/api'
 import { navigate, Logo } from '../App'
 import { Stage } from '../components/Stage'
 import { Board } from '../components/Board'
@@ -508,6 +508,7 @@ function ImportModal({
                       : '⤓ Import page'}
               </button>
             </div>
+            <SyncKeysSection canvasId={canvasId} />
           </>
         ) : (
           <>
@@ -725,6 +726,105 @@ function ShareModal({ canvasId, onClose, onCopied }: { canvasId: string; onClose
             ⧉ Copy link
           </button>
         </div>
+      </div>
+    </div>
+  )
+}
+
+/* Design sync: mint write-only snippet keys so an app pushes its live screens
+   onto this canvas — the import path for products behind SSO/VPN where the
+   server-side importer can't go. */
+function SyncKeysSection({ canvasId }: { canvasId: string }) {
+  const [keys, setKeys] = useState<SyncKeyInfo[] | null>(null)
+  const [name, setAppName] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [copiedId, setCopiedId] = useState<string | null>(null)
+  /* keys are owner/member-only (durable access) — link-edit visitors get a
+     403 and shouldn't see the section at all */
+  const [forbidden, setForbidden] = useState(false)
+
+  useEffect(() => {
+    api
+      .listSyncKeys(canvasId)
+      .then(setKeys)
+      .catch((e) => {
+        if (e instanceof ApiError && e.status === 403) setForbidden(true)
+        setKeys([])
+      })
+  }, [canvasId])
+
+  const snippetFor = (secret: string) =>
+    `<script async src="${location.origin}/doop-sync.js" data-key="${secret}"></` + `script>`
+
+  async function create() {
+    if (busy || !name.trim()) return
+    setBusy(true)
+    try {
+      const key = await api.createSyncKey(canvasId, name.trim())
+      setKeys((k) => [key, ...(k ?? [])])
+      setAppName('')
+      posthog.capture('sync_key_created')
+    } catch (e) {
+      console.error(e)
+    }
+    setBusy(false)
+  }
+
+  function revoke(keyId: string) {
+    api.deleteSyncKey(canvasId, keyId).catch(console.error)
+    setKeys((k) => k?.filter((x) => x.id !== keyId) ?? null)
+  }
+
+  async function copySnippet(key: SyncKeyInfo) {
+    await navigator.clipboard.writeText(snippetFor(key.secret))
+    setCopiedId(key.id)
+    setTimeout(() => setCopiedId(null), 1500)
+  }
+
+  if (forbidden) return null
+  return (
+    <div className="sync-section">
+      <h3>Or sync a live app</h3>
+      <p className="share-note">
+        For apps a crawler can't reach — behind a login, a VPN, or on localhost. Paste one script tag and the screens
+        people visit land here as frames, kept current as the app changes. The key only writes to this canvas.
+      </p>
+      {(keys ?? []).map((k) => (
+        <div key={k.id} className="sync-key">
+          <div className="sync-key-row">
+            <b>{k.name}</b>
+            <span className="share-note">
+              {k.frames ? `${k.frames} screen${k.frames === 1 ? '' : 's'}` : k.lastUsedAt ? 'synced' : 'never synced'}
+            </span>
+            <button className="share-remove" title="Revoke this key" onClick={() => revoke(k.id)}>
+              ✕
+            </button>
+          </div>
+          <div className="sync-snippet-wrap">
+            <textarea
+              className="sync-snippet"
+              readOnly
+              rows={4}
+              value={snippetFor(k.secret)}
+              onFocus={(e) => e.target.select()}
+            />
+            <button className="btn sync-copy" onClick={() => copySnippet(k)}>
+              {copiedId === k.id ? 'Copied!' : '⧉ Copy'}
+            </button>
+          </div>
+        </div>
+      ))}
+      <div className="share-invite-row">
+        <input
+          placeholder="App name (e.g. Admin dashboard)"
+          value={name}
+          disabled={busy}
+          onChange={(e) => setAppName(e.target.value)}
+          onKeyDown={(e) => e.key === 'Enter' && create()}
+        />
+        <button className="btn primary" disabled={busy || !name.trim()} onClick={create}>
+          Create key
+        </button>
       </div>
     </div>
   )

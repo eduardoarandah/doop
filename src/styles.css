@@ -2150,6 +2150,74 @@ textarea {
   color: var(--ink-faint);
   margin: 0;
 }
+.sync-section {
+  border-top: 1px solid var(--line-soft);
+  padding-top: 14px;
+  margin-top: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.sync-section h3 {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink);
+}
+.sync-key {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.sync-key-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+}
+.sync-key-row b {
+  font-weight: 600;
+}
+.sync-key-row .share-note {
+  margin-right: auto;
+}
+/* the ✕ carries 6px of its own padding — pull it back so the glyph's edge
+   lines up with the snippet box's right border */
+.sync-key-row .share-remove {
+  margin-right: -6px;
+}
+.sync-snippet-wrap {
+  position: relative;
+}
+.sync-snippet {
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+  resize: none;
+  font-size: 11px;
+  line-height: 1.5;
+  font-family: ui-monospace, monospace;
+  color: var(--ink-faint);
+  background: var(--surface-sunken, rgba(0, 0, 0, 0.04));
+  border: 1px solid var(--line-soft);
+  border-radius: 8px;
+  padding: 8px 10px;
+  padding-right: 84px;
+  word-break: break-all;
+}
+.sync-snippet:focus {
+  outline: none;
+  border-color: var(--line);
+  color: var(--ink);
+}
+.sync-copy {
+  position: absolute;
+  top: 12px;
+  right: 14px;
+  font-size: 12px;
+  padding: 4px 10px;
+  background: var(--surface);
+}
 .ctx-menu .ctx-hint {
   margin-left: auto;
   font-size: 11px;

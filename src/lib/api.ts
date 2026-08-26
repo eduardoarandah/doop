@@ -9,6 +9,19 @@ export interface CanvasMember {
   owner: boolean
 }
 
+/** A write-only design-sync key: apps embed its secret in the doop-sync
+ *  snippet to push their live screens onto this canvas. */
+export interface SyncKeyInfo {
+  id: string
+  secret: string
+  canvasId: string
+  name: string
+  createdAt: number
+  lastUsedAt: number | null
+  /** synced frames currently on the canvas */
+  frames: number
+}
+
 export interface DiscoveredPage {
   url: string
   title: string
@@ -116,6 +129,12 @@ export const api = {
     req<CanvasMember>(`/api/canvases/${canvasId}/members`, { method: 'POST', body: JSON.stringify({ email }) }),
   removeMember: (canvasId: string, userId: string) =>
     req(`/api/canvases/${canvasId}/members/${userId}`, { method: 'DELETE' }),
+  /* design-sync keys for the embeddable snippet */
+  listSyncKeys: (canvasId: string) => req<SyncKeyInfo[]>(`/api/canvases/${canvasId}/sync-keys`),
+  createSyncKey: (canvasId: string, name: string) =>
+    req<SyncKeyInfo>(`/api/canvases/${canvasId}/sync-keys`, { method: 'POST', body: JSON.stringify({ name }) }),
+  deleteSyncKey: (canvasId: string, keyId: string) =>
+    req(`/api/canvases/${canvasId}/sync-keys/${keyId}`, { method: 'DELETE' }),
   guidelineHistory: (canvasId: string, name: string) =>
     req<{ markdown: string; savedAt: number; savedBy: string }[]>(
       `/api/canvases/${canvasId}/guidelines/${encodeURIComponent(name)}/history`,

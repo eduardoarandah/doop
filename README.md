@@ -296,6 +296,25 @@ For website viewing/imports, setting `CONTEXT_DEV_API_KEY` makes Context.dev acq
 HTML while Doop still sanitizes it and renders the preview locally; without the key, Doop navigates
 to the public page directly in Chromium.
 
+### Design sync: push an app's live screens onto a canvas
+
+Server-side import can't reach apps behind SSO or a VPN. The **doop-sync snippet** flips the capture
+to the user's browser: mint a write-only key in a canvas's Share dialog, drop one tag into the app —
+
+```html
+<script async src="https://your-doop-origin/doop-sync.js" data-key="dk_…"></script>
+```
+
+— and every distinct screen people visit lands on that canvas as a frame (one row per app), refreshed
+as the app changes. Routes are normalized (`/orders/8231` → `/orders/:id`) so each screen maps to one
+frame; captures are serialized from the CSSOM (so styled-components/emotion output survives), and
+same-origin webfonts and small images are inlined as data: URIs — fonts require CORS inside the
+sandboxed frame, and intranet URLs would never render for viewers outside the network. Scripts are
+stripped client- and server-side, input values are always dropped, and anything marked `data-doop-mask`
+is redacted before upload (`data-doop-sync-ignore` excludes an element entirely). The key is the whole
+credential: it can only write frames to its one canvas, so revoking it in the Share dialog cuts the
+app off instantly. Endpoint: `POST /ingest/<key>` (CORS-open, no cookies).
+
 ### How streaming looks (server-side smoothing)
 
 Agent HTML lands in the store immediately, but viewers see it through a **typewriter reveal**: the server
