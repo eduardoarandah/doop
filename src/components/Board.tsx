@@ -165,7 +165,15 @@ export function Board({ canvasId }: { canvasId: string }) {
                   <span> · {timeAgo(t.failedAt!)}</span>
                 </div>
                 <div className="bfailure">{t.failureReason ?? 'The agent did not finish this task.'}</div>
-                <button className="retry-action" onClick={() => api.retryCard(canvasId, t.id).catch(console.error)}>
+                <button
+                  className="retry-action"
+                  onClick={() =>
+                    api.retryCard(canvasId, t.id).catch((err) => {
+                      if (isResidentLimit(err)) useStore.getState().setLimitWall(true)
+                      else console.error(err)
+                    })
+                  }
+                >
                   ↻ Retry
                 </button>
               </div>

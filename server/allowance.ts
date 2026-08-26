@@ -6,15 +6,15 @@ import { getStatus } from './modelAccounts.ts'
 import type { AccountKind } from './modelAccounts.ts'
 
 /**
- * Free-tier metering for the resident design team. Initiating team work — a
- * board card or an element comment that @mentions a resident — consumes one
- * of RESIDENT_TASK_LIMIT free tasks. Two things lift the meter entirely:
- * connecting your own MCP agent (Claude Code, Codex — your subscription, your
- * model, driving the canvas from outside), or connecting a model account so
- * the Doop Agent itself runs on your ChatGPT subscription or OpenAI key. Both
- * take effect immediately — a connected user is never metered again, and their
- * remaining free tasks simply stop being relevant. Feedback replies and
- * retries on existing work never count either: iteration stays free.
+ * Free-tier metering for the resident design team. Anything that triggers
+ * resident work consumes one of RESIDENT_TASK_LIMIT free tasks: a board card,
+ * an element comment that @mentions a resident, feedback on a task, and every
+ * retry. Two things lift the meter entirely: connecting your own MCP agent
+ * (Claude Code, Codex — your subscription, your model, driving the canvas
+ * from outside), or connecting a model account so the Doop Agent itself runs
+ * on your ChatGPT subscription or OpenAI key. Both take effect immediately —
+ * a connected user is never metered again, and their remaining free tasks
+ * simply stop being relevant.
  */
 
 export const RESIDENT_TASK_LIMIT = Math.max(0, Number(process.env.RESIDENT_TASK_LIMIT ?? 5))

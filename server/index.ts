@@ -996,10 +996,14 @@ app.post('/api/comments/:id/resolve', (req, res) => {
   res.json(actions.resolveComment(req.params.id, req.user!.name))
 })
 
-app.post('/api/comments/:id/retry', (req, res) => {
+app.post('/api/comments/:id/retry', async (req, res) => {
   const found = actions.findComment(req.params.id)
   if (!found) return res.status(404).json({ error: 'comment not found' })
   if (!requireCanvas(req, res, found.canvasId)) return
+  const gate = await allowance.consumeResidentTask(req.user!.id)
+  if (!gate.ok) {
+    return res.status(403).json({ error: 'resident_limit', used: gate.used, limit: gate.limit })
+  }
   res.json(actions.retryComment(req.params.id, req.user!.name))
 })
 
@@ -1142,26 +1146,40 @@ app.post('/api/canvases/:canvasId/cards/:id/done', (req, res) => {
   res.json(card)
 })
 
-app.post('/api/canvases/:canvasId/cards/:id/retry', (req, res) => {
+app.post('/api/canvases/:canvasId/cards/:id/retry', async (req, res) => {
   if (!requireCanvas(req, res, req.params.canvasId)) return
+  const gate = await allowance.consumeResidentTask(req.user!.id)
+  if (!gate.ok) {
+    return res.status(403).json({ error: 'resident_limit', used: gate.used, limit: gate.limit })
+  }
   const card = actions.retryCard(req.params.canvasId, req.params.id, req.user!.name)
   if (!card) return res.status(404).json({ error: 'card not found' })
   res.json(card)
 })
 
-app.post('/api/tasks/:id/feedback', (req, res) => {
+app.post('/api/tasks/:id/feedback', async (req, res) => {
   const canvasId = actions.taskCanvasId(req.params.id)
   if (!canvasId) return res.status(404).json({ error: 'task not found' })
   if (!requireCanvas(req, res, canvasId)) return
-  const fb = actions.addTaskFeedback(req.params.id, req.user!.name, String(req.body?.text ?? ''), req.user!.id)
+  const text = String(req.body?.text ?? '').trim()
+  if (!text) return res.status(400).json({ error: 'empty text' })
+  const gate = await allowance.consumeResidentTask(req.user!.id)
+  if (!gate.ok) {
+    return res.status(403).json({ error: 'resident_limit', used: gate.used, limit: gate.limit })
+  }
+  const fb = actions.addTaskFeedback(req.params.id, req.user!.name, text, req.user!.id)
   if (!fb) return res.status(404).json({ error: 'task not found or empty text' })
   res.json(fb)
 })
 
-app.post('/api/feedback/:id/retry', (req, res) => {
+app.post('/api/feedback/:id/retry', async (req, res) => {
   const found = actions.findFeedback(req.params.id)
   if (!found) return res.status(404).json({ error: 'feedback not found' })
   if (!requireCanvas(req, res, found.canvasId)) return
+  const gate = await allowance.consumeResidentTask(req.user!.id)
+  if (!gate.ok) {
+    return res.status(403).json({ error: 'resident_limit', used: gate.used, limit: gate.limit })
+  }
   res.json(actions.retryTaskFeedback(req.params.id, req.user!.name))
 })
 

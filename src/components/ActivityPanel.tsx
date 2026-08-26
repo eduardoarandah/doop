@@ -5,6 +5,14 @@ import { api } from '../lib/api'
 import { timeAgo } from '../lib/time'
 import { AgentIcon } from './AgentIcon'
 import { MemoryPanel } from './MemoryPanel'
+import { isResidentLimit } from './TeamAllowance'
+
+/* feedback and retries are metered like any other resident task — a 403
+   here means the free tier ran out, so raise the connect wall */
+function reportLimit(err: unknown) {
+  if (isResidentLimit(err)) useStore.getState().setLimitWall(true)
+  else console.error(err)
+}
 
 function duration(t: AgentTask): string {
   const end = t.endedAt ?? Date.now()
@@ -144,7 +152,7 @@ function TaskRow({ task }: { task: AgentTask }) {
     try {
       await api.sendTaskFeedback(task.id, text)
     } catch (e) {
-      console.error(e)
+      reportLimit(e)
     }
   }
 
@@ -169,10 +177,7 @@ function TaskRow({ task }: { task: AgentTask }) {
               : duration(task)}
         </span>
         {task.failedAt && task.queuedBy && canvasId ? (
-          <button
-            className="retry-action compact"
-            onClick={() => api.retryCard(canvasId, task.id).catch(console.error)}
-          >
+          <button className="retry-action compact" onClick={() => api.retryCard(canvasId, task.id).catch(reportLimit)}>
             ↻ Retry
           </button>
         ) : null}
@@ -195,10 +200,7 @@ function TaskRow({ task }: { task: AgentTask }) {
             {f.failedAt ? (
               <span className="fb-failed">
                 {f.failureReason ?? 'The agent did not finish.'}
-                <button
-                  className="retry-action compact"
-                  onClick={() => api.retryTaskFeedback(f.id).catch(console.error)}
-                >
+                <button className="retry-action compact" onClick={() => api.retryTaskFeedback(f.id).catch(reportLimit)}>
                   ↻ Retry
                 </button>
               </span>

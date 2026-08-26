@@ -489,7 +489,12 @@ export const FrameView = memo(function FrameView({ frame, raster }: { frame: Fra
                           .catch(console.error)
                         setOpenThread(null)
                       }}
-                      onRetry={() => api.retryComment(c.id).catch(console.error)}
+                      onRetry={() =>
+                        api.retryComment(c.id).catch((err) => {
+                          if (isResidentLimit(err)) useStore.getState().setLimitWall(true)
+                          else console.error(err)
+                        })
+                      }
                     />
                   )}
                 </div>
