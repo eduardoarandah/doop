@@ -302,7 +302,7 @@ Server-side import can't reach apps behind SSO or a VPN. The **doop-sync snippet
 to the user's browser: mint a write-only key in a canvas's Share dialog, drop one tag into the app —
 
 ```html
-<script async src="https://your-doop-origin/doop-sync.js" data-key="dk_…"></script>
+<script async src="https://your-doop-origin/doop-sync.js?key=dk_…"></script>
 ```
 
 — and every distinct screen people visit lands on that canvas as a frame (one row per app), refreshed

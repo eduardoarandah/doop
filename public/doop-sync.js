@@ -1,7 +1,7 @@
 /**
  * doop design sync — one tag in your app, your live screens on a doop canvas.
  *
- *   <script async src="https://yourdoop.example/doop-sync.js" data-key="dk_…"></script>
+ *   <script async src="https://yourdoop.example/doop-sync.js?key=dk_…"></script>
  *
  * Runs in the USER'S browser, so it captures apps no crawler can reach
  * (SSO, VPN, localhost) exactly as the signed-in user sees them. Each
@@ -12,8 +12,10 @@
  *   data-host  override the doop origin (defaults to where this file loaded from)
  *   data-mask  extra CSS selector whose text is redacted before upload
  *
- * Installing through a tag manager (GTM etc.)? If it strips data attributes,
- * set globals in the same tag instead:
+ * The key can also ride in the URL itself — the form that survives every
+ * tag manager, since src is the one attribute injectors never strip:
+ *   <script async src="https://yourdoop.example/doop-sync.js?key=dk_…"></script>
+ * Last resort (injector rewrites the src too): set globals in the same tag:
  *   <script>window.doopSyncKey = 'dk_…'; window.doopSyncHost = 'https://yourdoop.example'</script>
  *
  * Privacy: input values are always dropped, [data-doop-mask] subtrees are
@@ -24,28 +26,36 @@
   'use strict'
   if (window.doopSync) return
   /* Tag managers re-create script tags when injecting, which can leave
-     document.currentScript null or pointing at the injector — fall back to
-     finding our own tag by its data-key, then to the window.* globals. */
+     document.currentScript null/useless and strip data attributes — so the
+     canonical install carries the key in the src query string, and the tag
+     is findable by that src. Priority: data attrs, then src params, then
+     the window.* globals. */
   var script = document.currentScript
-  if (!script || !script.getAttribute('data-key')) {
-    var tagged = document.querySelectorAll('script[data-key]')
-    for (var t = 0; t < tagged.length; t++) {
-      if ((tagged[t].getAttribute('src') || '').indexOf('doop-sync') !== -1) {
-        script = tagged[t]
+  if (!script || !(script.getAttribute('data-key') || (script.src || '').indexOf('doop-sync') !== -1)) {
+    script = null
+    var candidates = document.querySelectorAll('script[src]')
+    for (var t = 0; t < candidates.length; t++) {
+      if (candidates[t].src.indexOf('doop-sync') !== -1) {
+        script = candidates[t]
         break
       }
     }
   }
-  var KEY = (script && script.getAttribute('data-key')) || window.doopSyncKey
-  var HOST = (script && script.getAttribute('data-host')) || window.doopSyncHost || ''
-  var MASK = (script && script.getAttribute('data-mask')) || ''
-  if (!HOST && script && script.src) {
-    try {
-      HOST = new URL(script.src).origin
-    } catch (e) {
-      /* no src origin — data-host required */
-    }
+  var srcUrl = null
+  try {
+    if (script && script.src) srcUrl = new URL(script.src)
+  } catch (e) {
+    /* unparsable src */
   }
+  var KEY =
+    (script && script.getAttribute('data-key')) || (srcUrl && srcUrl.searchParams.get('key')) || window.doopSyncKey
+  var HOST =
+    (script && script.getAttribute('data-host')) ||
+    (srcUrl && srcUrl.searchParams.get('host')) ||
+    window.doopSyncHost ||
+    (srcUrl && srcUrl.origin) ||
+    ''
+  var MASK = (script && script.getAttribute('data-mask')) || ''
   if (!KEY || !HOST) {
     console.warn('[doop-sync] missing data-key or data-host — not capturing')
     return

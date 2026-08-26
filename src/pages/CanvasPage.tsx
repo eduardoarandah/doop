@@ -753,8 +753,9 @@ function SyncKeysSection({ canvasId }: { canvasId: string }) {
       })
   }, [canvasId])
 
+  /* key in the src query string — the one attribute tag managers never strip */
   const snippetFor = (secret: string) =>
-    `<script async src="${location.origin}/doop-sync.js" data-key="${secret}"></` + `script>`
+    `<script async src="${location.origin}/doop-sync.js?key=${secret}"></` + `script>`
 
   async function create() {
     if (busy || !name.trim()) return
