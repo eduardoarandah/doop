@@ -6,7 +6,7 @@ import { z } from 'zod'
 import { store } from './store.ts'
 import * as actions from './actions.ts'
 import { canAccessCanvas } from './access.ts'
-import { auth, getUserName, PUBLIC_ORIGIN } from './auth.ts'
+import { auth, getUserName, isBanned, PUBLIC_ORIGIN } from './auth.ts'
 import { renderFrame } from './screenshot.ts'
 import { DOOP_GUIDE, GUIDE_TOPICS } from './guide.ts'
 import { ESCAPED_HTML_NOTE, looksEscapedHtml } from './escapedHtml.ts'
@@ -1145,6 +1145,16 @@ export async function handleMcpRequest(req: Request, res: Response) {
         error: { code: -32001, message: 'Unauthorized: this MCP server requires OAuth' },
         id: null,
       })
+    return
+  }
+  /* banning revokes browser sessions, but an already-issued MCP token keeps
+     validating until it expires — refuse it here so a ban is total */
+  if (session.userId && (await isBanned(session.userId))) {
+    res.status(403).json({
+      jsonrpc: '2.0',
+      error: { code: -32003, message: 'This account has been disabled on this server.' },
+      id: null,
+    })
     return
   }
   const owner = session.userId ? await getUserName(session.userId) : undefined

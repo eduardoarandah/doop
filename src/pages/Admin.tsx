@@ -42,6 +42,22 @@ export function Admin() {
     location.assign('/')
   }
 
+  async function setBanned(u: AdminUser, banned: boolean) {
+    const ok = window.confirm(
+      banned
+        ? `Ban ${u.name} (${u.email})? They are signed out everywhere and cannot sign in or use MCP until unbanned.`
+        : `Unban ${u.name} (${u.email})?`,
+    )
+    if (!ok) return
+    try {
+      if (banned) await adminApi.ban(u.id)
+      else await adminApi.unban(u.id)
+      setUsers((list) => (list ? list.map((x) => (x.id === u.id ? { ...x, banned } : x)) : list))
+    } catch (e) {
+      console.error(e)
+    }
+  }
+
   if (denied) {
     return (
       <div className="home">
@@ -226,9 +242,19 @@ export function Admin() {
                     </div>
                   </div>
                   {u.role !== 'admin' && (
-                    <button className="btn ghost small" onClick={() => viewAs(u.id)}>
-                      View as
-                    </button>
+                    <div className="admin-user-actions">
+                      {!u.banned && (
+                        <button className="btn ghost small" onClick={() => viewAs(u.id)}>
+                          View as
+                        </button>
+                      )}
+                      <button
+                        className={`btn ghost small${u.banned ? '' : ' danger'}`}
+                        onClick={() => setBanned(u, !u.banned)}
+                      >
+                        {u.banned ? 'Unban' : 'Ban'}
+                      </button>
+                    </div>
                   )}
                 </div>
               ))}

@@ -266,4 +266,10 @@ export const adminApi = {
   impersonate: (userId: string) =>
     req('/api/auth/admin/impersonate-user', { method: 'POST', body: JSON.stringify({ userId }) }),
   stopImpersonating: () => req('/api/auth/admin/stop-impersonating', { method: 'POST' }),
+
+  /* also better-auth's: banning revokes the user's sessions and blocks
+     sign-in; the server refuses their MCP tokens separately */
+  ban: (userId: string, banReason?: string) =>
+    req('/api/auth/admin/ban-user', { method: 'POST', body: JSON.stringify({ userId, banReason }) }),
+  unban: (userId: string) => req('/api/auth/admin/unban-user', { method: 'POST', body: JSON.stringify({ userId }) }),
 }

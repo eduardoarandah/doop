@@ -6911,6 +6911,11 @@ textarea {
   font-size: 12.5px;
   color: var(--ink-faint);
 }
+.admin-user-actions {
+  display: flex;
+  gap: 8px;
+  flex-shrink: 0;
+}
 
 /* impersonation: deliberately loud, and it displaces the page rather than
    floating over it — a banner you can scroll past is a banner you forget */

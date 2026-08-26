@@ -200,3 +200,22 @@ export async function getUserName(userId: string): Promise<string | undefined> {
   if (row?.name) userNames.set(userId, { name: row.name, at: Date.now() })
   return row?.name
 }
+
+/* userId -> banned, same short cache: banning revokes browser sessions via
+   better-auth, but MCP OAuth tokens stay valid until expiry — this check is
+   what actually locks a banned user's agent out, so it runs per MCP call */
+const banStates = new Map<string, { banned: boolean; at: number }>()
+
+export async function isBanned(userId: string): Promise<boolean> {
+  const cached = banStates.get(userId)
+  if (cached && Date.now() - cached.at < NAME_TTL_MS) return cached.banned
+  const [row] = await db
+    .select({ banned: authSchema.user.banned })
+    .from(authSchema.user)
+    .where(eq(authSchema.user.id, userId))
+  /* an unknown user is treated as banned: a token whose account is gone
+     should not keep working */
+  const banned = row ? !!row.banned : true
+  banStates.set(userId, { banned, at: Date.now() })
+  return banned
+}
