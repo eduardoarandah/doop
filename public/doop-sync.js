@@ -5,7 +5,8 @@
  *
  * Runs in the USER'S browser, so it captures apps no crawler can reach
  * (SSO, VPN, localhost) exactly as the signed-in user sees them. Each
- * distinct route becomes one frame, refreshed when the screen changes.
+ * distinct route becomes one frame, imported once — a short grace window
+ * lets the first capture settle, then the screen freezes on the canvas.
  *
  * Options (attributes on the script tag):
  *   data-key   required — a canvas sync key from doop's share dialog
@@ -21,6 +22,10 @@
  * Privacy: input values are always dropped, [data-doop-mask] subtrees are
  * redacted, scripts never leave the page. `window.doopSync.capture()` forces
  * a capture; add data-doop-sync-ignore to elements that should never upload.
+ *
+ * Frames show each screen as it GREETS the user: after the first hover over
+ * a menu, click, or keypress, the poked-at DOM (open dropdowns, modals,
+ * moved focus) never replaces a copy the canvas already has.
  */
 ;(function () {
   'use strict'
@@ -207,7 +212,7 @@
     return Promise.all(jobs)
   }
 
-  function serialize() {
+  function snapshotDom() {
     var root = document.documentElement.cloneNode(true)
 
     /* pair images while both trees are still structurally identical */
@@ -266,19 +271,28 @@
     for (i = 0; i < masked.length; i++) masked[i].textContent = '•••'
 
     var styles = collectCss()
-    var baseSize = root.outerHTML.length + styles.css.length
-    var budget = { left: Math.max(0, MAX_BYTES - baseSize) }
+    /* phase 1 ends here: everything above is cheap DOM work whose serialized
+       form is stable — the content hash is computed on it so unchanged
+       screens skip phase 2 (asset fetches + base64) entirely */
+    return { root: root, css: styles.css, cssLinks: styles.links, imgPairs: imgPairs, pre: root.outerHTML + styles.css }
+  }
 
-    return Promise.all([inlineCssFonts(styles.css, budget), inlineImages(imgPairs, budget)]).then(function (results) {
-      var head = root.querySelector('head')
-      var inject = ''
-      for (var l = 0; l < styles.links.length; l++) {
-        inject += '<link rel="stylesheet" href="' + styles.links[l].replace(/"/g, '&quot;') + '">'
-      }
-      inject += '<style data-doop-sync>\n' + results[0].replace(/<\/style/gi, '<\\/style') + '\n</style>'
-      if (head) head.insertAdjacentHTML('beforeend', inject)
-      return '<!doctype html>\n' + root.outerHTML
-    })
+  /* phase 2: the expensive part — fetch + base64 same-origin fonts/images,
+     then assemble the final document. Runs only for snapshots being sent. */
+  function finalizeSnapshot(snap) {
+    var budget = { left: Math.max(0, MAX_BYTES - snap.pre.length) }
+    return Promise.all([inlineCssFonts(snap.css, budget), inlineImages(snap.imgPairs, budget)]).then(
+      function (results) {
+        var head = snap.root.querySelector('head')
+        var inject = ''
+        for (var l = 0; l < snap.cssLinks.length; l++) {
+          inject += '<link rel="stylesheet" href="' + snap.cssLinks[l].replace(/"/g, '&quot;') + '">'
+        }
+        inject += '<style data-doop-sync>\n' + results[0].replace(/<\/style/gi, '<\\/style') + '\n</style>'
+        if (head) head.insertAdjacentHTML('beforeend', inject)
+        return '<!doctype html>\n' + snap.root.outerHTML
+      },
+    )
   }
 
   /* ---- flow map: which link sits where, and where people actually went */
@@ -322,6 +336,9 @@
     if (now !== lastPage) {
       if (pendingEdges.length < 20) pendingEdges.push({ from: lastPage, to: now })
       lastPage = now
+      /* a new screen opens a fresh untouched window — re-arm and re-stash */
+      armInteractionWatch()
+      scheduleStashes()
     }
   }
 
@@ -333,95 +350,203 @@
 
   /* CAPTURE_VERSION invalidates the dedup when the capture format changes —
      an upgraded snippet must re-upload screens whose HTML alone is unchanged
-     (e.g. to populate the flow map's link hotspots). */
-  var CAPTURE_VERSION = '2'
+     (e.g. to populate the flow map's link hotspots). v3: the hash moved to
+     the pre-asset-inline serialization. */
+  var CAPTURE_VERSION = '3'
   function memoKey(page) {
     return '__doopSync:' + CAPTURE_VERSION + ':' + KEY.slice(-6) + ':' + page
   }
 
-  function shouldSend(page, h) {
+  function readMemo(page) {
     try {
-      var memo = JSON.parse(localStorage.getItem(memoKey(page)) || 'null')
-      if (!memo) return true
-      if (memo.h === h && Date.now() - memo.t < 6 * 3600000) return false // unchanged — server has it
-      return Date.now() - memo.t >= MIN_RESEND_MS
+      return JSON.parse(localStorage.getItem(memoKey(page)) || 'null')
     } catch (e) {
-      return true
+      return null
     }
+  }
+  function writeMemo(page, memo) {
+    try {
+      localStorage.setItem(memoKey(page), JSON.stringify(memo))
+    } catch (e) {
+      /* private mode — fine, we just lose the dedup */
+    }
+  }
+
+  function shouldSend(page, h) {
+    var memo = readMemo(page)
+    if (!memo) return true
+    if (memo.s) return false // frozen server-side — this screen is settled
+    if (memo.h === h && Date.now() - memo.t < 6 * 3600000) return false // unchanged — server has it
+    return Date.now() - memo.t >= MIN_RESEND_MS
+  }
+
+  /* Cheapest skip of all: a global mutation counter. If the DOM hasn't
+     changed since the last confirmed capture of this screen, there is
+     nothing new to serialize — the scroll/nav trigger costs nothing. */
+  var mutationCount = 0
+  var capturedAtMutation = {}
+  try {
+    new MutationObserver(function (list) {
+      mutationCount += list.length
+    }).observe(document.documentElement, { subtree: true, childList: true, attributes: true, characterData: true })
+  } catch (e) {
+    /* no observer — every trigger serializes, as before */
+  }
+
+  /* Flush pending navigations without a snapshot. Requeue unless the
+     server's marker proves the batch was recorded: its rate-limit 429 fires
+     before recording, the page-throttle 429 after. */
+  function sendEdges(page) {
+    if (!pendingEdges.length) return
+    var batch = pendingEdges.splice(0, 20)
+    return fetch(ENDPOINT, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      keepalive: true,
+      body: JSON.stringify({ page: page, edges: batch }),
+    })
+      .then(function (r) {
+        if (r.headers.get('X-Doop-Edges') !== null) batch = []
+        if (!r.ok) throw new Error('sync ' + r.status)
+      })
+      ['catch'](function () {
+        if (batch.length) pendingEdges = batch.concat(pendingEdges).slice(0, 20)
+      })
+  }
+
+  /* Screens should sync as they GREET the user, but hovering a nav opens
+     mega-menus, clicks open modals, keys move focus — and the settle delay
+     gives visitors plenty of time to do all three before the first capture.
+     From the first interaction on, the live DOM is suspect: it never
+     replaces a copy the server already has, and a screen the server lacks
+     ships from the pristine stash below instead. mouseover only counts over
+     interactive elements, so wheel-scrolling past body text stays untouched
+     and the scroll re-capture can still cure reveal animations. */
+  var interacted = false
+  var INTERACT_EVENTS = ['mouseover', 'pointerdown', 'keydown']
+  var HOVER_RISK =
+    'nav,header,a,button,summary,select,[role="button"],[role="menu"],[role="menubar"],' +
+    '[aria-haspopup],[aria-expanded],[tabindex]'
+  function onInteract(e) {
+    if (e.type === 'mouseover' && !(e.target && e.target.closest && e.target.closest(HOVER_RISK))) return
+    /* Last pristine instant: this capture-phase listener runs BEFORE the
+       app's own handler opens a menu or modal, so stashing synchronously
+       here beats any timer race — including the cursor already resting on
+       the nav when the page loads (interaction at ~0ms, both timers late).
+       One-time cost on first interaction, and only if no stash exists yet. */
+    if (!(pristine && pristine.page === routeKey())) stashPristine()
+    interacted = true
+    for (var i = 0; i < INTERACT_EVENTS.length; i++) window.removeEventListener(INTERACT_EVENTS[i], onInteract, true)
+  }
+  function armInteractionWatch() {
+    interacted = false
+    for (var i = 0; i < INTERACT_EVENTS.length; i++) window.addEventListener(INTERACT_EVENTS[i], onInteract, true)
+  }
+  armInteractionWatch()
+
+  /* Snapshotted (phase 1 only — cheap) while the page is still untouched;
+     finalized and uploaded in place of the live DOM when the user started
+     poking before the settle capture fired. Stashed twice: early so fast
+     hoverers don't beat it, late so skeletons have resolved. */
+  var pristine = null
+  var stashTimers = []
+  function stashPristine() {
+    if (interacted) return
+    try {
+      pristine = { page: routeKey(), snap: snapshotDom() }
+    } catch (e) {
+      /* a failed stash just means capture falls back to the live DOM */
+    }
+  }
+  function scheduleStashes() {
+    for (var i = 0; i < stashTimers.length; i++) clearTimeout(stashTimers[i])
+    stashTimers = [setTimeout(stashPristine, 400), setTimeout(stashPristine, 1600)]
   }
 
   var capturing = false
   function capture(force) {
     if (capturing) return
-    capturing = true
     var page = routeKey()
+    var memo = readMemo(page)
+    var poked = !force && interacted
+    if (!force && ((memo && memo.s) || capturedAtMutation[page] === mutationCount || (poked && memo))) {
+      /* frozen screen, untouched DOM, or a poked-at DOM that must not
+         replace a copy the server already has — only navigations flow */
+      sendEdges(page)
+      return
+    }
+    capturing = true
+    var mc = mutationCount // state this capture describes — mutations during the async pipeline stay pending
+    var usedPristine = false
+    var sentSnapshot = false
     var edges = []
-    /* Promise.resolve().then keeps a synchronous throw inside serialize on
+    /* Promise.resolve().then keeps a synchronous throw inside snapshotDom on
        the promise chain — it must hit the catch below, or `capturing` wedges
        shut and every later capture silently no-ops. */
     Promise.resolve()
       .then(function () {
-        return serialize()
-      })
-      .then(function (html) {
-        capturing = false
-        if (html.length > MAX_BYTES) {
-          console.warn('[doop-sync] snapshot too large (' + html.length + ' bytes) — not uploading')
-          return
+        if (poked && pristine && pristine.page === page) {
+          usedPristine = true
+          return pristine.snap
         }
-        var h = hash(html)
-        edges = pendingEdges.splice(0, 20)
+        return snapshotDom()
+      })
+      .then(function (snap) {
+        var h = hash(snap.pre)
         if (!force && !shouldSend(page, h)) {
-          if (!edges.length) return
-          /* screen unchanged — flush just the navigations */
+          /* content unchanged — remember which DOM state we confirmed, so
+             later triggers skip even the serialize (unless the snapshot was
+             the stash: the live DOM was never compared) */
+          capturing = false
+          if (!usedPristine) capturedAtMutation[page] = mc
+          return sendEdges(page)
+        }
+        edges = pendingEdges.splice(0, 20)
+        return finalizeSnapshot(snap).then(function (html) {
+          capturing = false
+          if (html.length > MAX_BYTES) {
+            console.warn('[doop-sync] snapshot too large (' + html.length + ' bytes) — not uploading')
+            return
+          }
+          writeMemo(page, { h: h, t: Date.now() })
+          sentSnapshot = true
           return fetch(ENDPOINT, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            keepalive: true,
-            body: JSON.stringify({ page: page, edges: edges }),
+            keepalive: html.length < 60000, // keepalive caps the body — big snapshots go without it
+            body: JSON.stringify({
+              page: page,
+              title: document.title,
+              url: location.href,
+              width: window.innerWidth,
+              height: Math.min(document.documentElement.scrollHeight, 8000),
+              html: html,
+              links: collectLinks(page),
+              edges: edges,
+            }),
           }).then(function (r) {
-            /* only the server's explicit marker proves the edges were stored:
-               its rate-limit 429 fires before recording (requeue), while the
-               page-throttle 429 fires after (requeue would double-count) */
-            if (r.headers.get('X-Doop-Edges') !== null) edges = []
+            if (r.headers.get('X-Doop-Edges') !== null) edges = [] // recorded server-side — see sendEdges
             if (!r.ok) throw new Error('sync ' + r.status)
+            if (r.headers.get('X-Doop-Synced') !== null) writeMemo(page, { s: 1, t: Date.now() }) // frozen for good
+            if (!usedPristine) capturedAtMutation[page] = mc
           })
-        }
-        try {
-          localStorage.setItem(memoKey(page), JSON.stringify({ h: h, t: Date.now() }))
-        } catch (e) {
-          /* private mode — fine, we just lose the dedup */
-        }
-        return fetch(ENDPOINT, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          keepalive: html.length < 60000, // keepalive caps the body — big snapshots go without it
-          body: JSON.stringify({
-            page: page,
-            title: document.title,
-            url: location.href,
-            width: window.innerWidth,
-            height: Math.min(document.documentElement.scrollHeight, 8000),
-            html: html,
-            links: collectLinks(page),
-            edges: edges,
-          }),
-        }).then(function (r) {
-          if (r.headers.get('X-Doop-Edges') !== null) edges = [] // recorded server-side — see above
-          if (!r.ok) throw new Error('sync ' + r.status)
         })
       })
       ['catch'](function (err) {
-        /* never break the host app over a sync error — but log it, drop the
-           memo so the next scheduled capture retries instead of skipping,
-           and put the drained navigations back so counts don't under-report */
+        /* never break the host app over a sync error — but log it, put the
+           drained navigations back so counts don't under-report, and if a
+           SNAPSHOT upload failed drop its memo so the next capture retries
+           instead of skipping. An edges-only failure keeps the memo — losing
+           it would let a poked-at DOM slip past the gate above. */
         console.warn('[doop-sync] capture failed', err)
         capturing = false
         if (edges.length) pendingEdges = edges.concat(pendingEdges).slice(0, 20)
-        try {
-          localStorage.removeItem(memoKey(page))
-        } catch (e2) {
-          /* private mode */
+        if (sentSnapshot) {
+          try {
+            localStorage.removeItem(memoKey(page))
+          } catch (e2) {
+            /* private mode */
+          }
         }
       })
   }
@@ -436,8 +561,12 @@
   }
 
   /* initial screen + every SPA navigation */
-  if (document.readyState === 'complete') schedule()
-  else window.addEventListener('load', schedule)
+  function onLoad() {
+    scheduleStashes()
+    schedule()
+  }
+  if (document.readyState === 'complete') onLoad()
+  else window.addEventListener('load', onLoad)
   var push = history.pushState
   history.pushState = function () {
     var out = push.apply(this, arguments)

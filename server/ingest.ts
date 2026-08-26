@@ -149,6 +149,13 @@ const INGESTS_PER_MIN = 30
 /** floor between rewrites of the SAME page — a busy app must not churn the
  *  canvas (and its websocket room) with a frame write per user interaction */
 const PAGE_MIN_INTERVAL_MS = Number(process.env.SYNC_PAGE_INTERVAL_MS ?? 30_000)
+/** Import-once: after this age a synced frame freezes — later captures no
+ *  longer rewrite it (traversal edges keep accumulating). The grace window
+ *  exists so the creating visit can still improve its own capture: scroll
+ *  reveals completing, late images, a second look at the same screen.
+ *  Re-import = delete the frame and visit the page again. Continuous
+ *  updating can return later as an opt-in. */
+const FREEZE_AFTER_MS = Number(process.env.SYNC_FREEZE_MS ?? 15 * 60_000)
 
 const ingestHits = new Map<string, number[]>()
 const pageLastWrite = new Map<string, number>()
@@ -168,8 +175,8 @@ export function setIngestCors(res: express.Response) {
   res.set('Access-Control-Allow-Origin', '*')
   res.set('Access-Control-Allow-Methods', 'POST, OPTIONS')
   res.set('Access-Control-Allow-Headers', 'Content-Type')
-  /* the snippet reads this to know its edge batch was recorded (see below) */
-  res.set('Access-Control-Expose-Headers', 'X-Doop-Edges')
+  /* the snippet reads these: edge batch recorded, and screen frozen (see below) */
+  res.set('Access-Control-Expose-Headers', 'X-Doop-Edges, X-Doop-Synced')
   res.set('Access-Control-Max-Age', '86400')
   /* Chrome Private Network Access: a page on a public origin posting to a
      doop on localhost/an intranet host needs this opt-in on the preflight —
@@ -332,6 +339,12 @@ export async function handleIngest(req: express.Request, res: express.Response) 
   const mine = canvas.frames.filter((f) => syncFrameMarker(f.html)?.startsWith(`${key.id}/`))
   const existing = mine.find((f) => syncFrameMarker(f.html) === marker)
   if (existing) {
+    if (Date.now() - existing.createdAt > FREEZE_AFTER_MS) {
+      /* the header tells the snippet this screen is settled — it stops
+         serializing it for good, not just until the content hash drifts */
+      res.set('X-Doop-Synced', '1')
+      return res.json({ ok: true, frameId: existing.id, frozen: true })
+    }
     if (existing.html === wrapped) {
       /* content matches, but this capture may still carry fresher hotspots —
          e.g. the first upload from a snippet version that reports links */
@@ -367,6 +380,31 @@ export async function handleIngest(req: express.Request, res: express.Response) 
   if (!frame) return res.status(410).json({ error: 'canvas vanished mid-sync' })
   await saveLinks(key.id, page, links)
   res.json({ ok: true, frameId: frame.id, created: true })
+}
+
+/** The flow map as plain sentences for agents: which frame links to which
+ *  (deduped by label), and where users actually navigate, most-traveled
+ *  first. One shared formatter so MCP agents and the resident team read the
+ *  same picture. Returns [] when the canvas has no flow data. */
+export function describeSyncFlow(flow: { links: SyncFlowLink[]; edges: SyncFlowEdge[] }, frames: Frame[]): string[] {
+  const nameOf = (id: string) => {
+    const f = frames.find((x) => x.id === id)
+    return f ? `"${f.name}" (${f.id})` : id
+  }
+  const lines: string[] = []
+  for (const e of [...flow.edges].sort((a, b) => b.count - a.count)) {
+    lines.push(
+      `${nameOf(e.fromFrameId)} → ${nameOf(e.toFrameId)}: ${e.count} real user navigation${e.count === 1 ? '' : 's'}`,
+    )
+  }
+  const seen = new Set<string>()
+  for (const l of flow.links) {
+    const key = `${l.fromFrameId}|${l.toFrameId}|${l.label ?? ''}`
+    if (seen.has(key)) continue
+    seen.add(key)
+    lines.push(`${nameOf(l.fromFrameId)} links to ${nameOf(l.toFrameId)}${l.label ? ` via “${l.label}”` : ''}`)
+  }
+  return lines
 }
 
 /** Frames synced by a key, for the share modal's per-key screen count. */

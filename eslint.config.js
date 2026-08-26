@@ -37,7 +37,7 @@ export default tseslint.config(
       globals: Object.fromEntries(
         (
           'window document location history localStorage fetch console setTimeout clearTimeout ' +
-          'matchMedia URL JSON Date Math FileReader Promise'
+          'matchMedia URL JSON Date Math FileReader Promise MutationObserver'
         )
           .split(' ')
           .map((g) => [g, 'readonly']),

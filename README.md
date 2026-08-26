@@ -305,8 +305,11 @@ to the user's browser: mint a write-only key in a canvas's Share dialog, drop on
 <script async src="https://your-doop-origin/doop-sync.js?key=dk_…"></script>
 ```
 
-— and every distinct screen people visit lands on that canvas as a frame (one row per app), refreshed
-as the app changes. Routes are normalized (`/orders/8231` → `/orders/:id`) so each screen maps to one
+— and every distinct screen people visit lands on that canvas as a frame (one row per app), imported
+once: a short grace window lets the first capture settle (scroll reveals, late images), then the frame
+freezes so later visits — different viewports, other users' data, open menus — never churn it. Deleting
+a frame re-imports it on the next visit; navigation counts keep accumulating regardless. Routes are
+normalized (`/orders/8231` → `/orders/:id`) so each screen maps to one
 frame; captures are serialized from the CSSOM (so styled-components/emotion output survives), and
 same-origin webfonts and small images are inlined as data: URIs — fonts require CORS inside the
 sandboxed frame, and intranet URLs would never render for viewers outside the network. Scripts are

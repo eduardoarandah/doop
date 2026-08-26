@@ -6,6 +6,7 @@ import { inspectFrame, renderFrame } from './screenshot.ts'
 import { AGENT_ROLES, DEFAULT_ROLE_ID, roleById, roleByAgentName, roleName } from '../shared/agents.ts'
 import type { AgentRole } from '../shared/agents.ts'
 import * as imageSearch from './imageSearch.ts'
+import * as ingest from './ingest.ts'
 import { viewWebsite, referencedUrls } from './website.ts'
 import { createImportedWebpageFrame, findImportedWebpageFrame } from './webpageImport.ts'
 import { DESIGN_QUALITY } from './guide.ts'
@@ -244,6 +245,16 @@ async function runAgent(canvasId: string, agentName: string, stalled: Set<string
       .join('\n')
 
     const sections: string[] = []
+    /* design-synced canvases: real navigation between the synced screens is
+       redesign-critical context — heavy paths must stay prominent */
+    const flowLines = canvas ? ingest.describeSyncFlow(await ingest.getSyncFlow(canvas), visibleFrames) : []
+    if (flowLines.length > 0) {
+      sections.push(
+        `How this app's screens connect (from live design sync — navigation counts are real users):\n` +
+          flowLines.map((line) => `- ${line}`).join('\n') +
+          `\nRespect this when redesigning: do not bury or weaken elements that carry heavy navigation.`,
+      )
+    }
     if (items.length > 0) {
       sections.push(
         `New human feedback on this canvas:\n` +

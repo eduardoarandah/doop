@@ -1,5 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { Client, startServer, type Server } from './harness.ts'
+import { describeSyncFlow } from '../server/ingest.ts'
+import type { Frame } from '../shared/types.ts'
 
 /**
  * Design-sync ingest: the doop-sync snippet's endpoint and the key-management
@@ -262,5 +264,90 @@ describe('design sync ingest', () => {
       body: JSON.stringify({ page: '/x', html: '<p>x</p>' }),
     })
     expect(res.status).toBe(404)
+  })
+})
+
+/* Pure formatter — what MCP get_canvas and the resident team read as flow
+   context. No server needed. */
+describe('describeSyncFlow', () => {
+  const frame = (id: string, name: string): Frame =>
+    ({
+      id,
+      canvasId: 'c',
+      name,
+      x: 0,
+      y: 0,
+      width: 100,
+      height: 100,
+      html: '',
+      createdAt: 0,
+      updatedAt: 0,
+      updatedBy: 't',
+    }) as Frame
+
+  it('renders edges most-traveled first, dedupes links by label', () => {
+    const frames = [frame('f1', 'Catalog'), frame('f2', 'Checkout'), frame('f3', 'Home')]
+    const lines = describeSyncFlow(
+      {
+        links: [
+          { fromFrameId: 'f1', toFrameId: 'f2', x: 0, y: 0, width: 10, height: 10, label: 'Buy now' },
+          { fromFrameId: 'f1', toFrameId: 'f2', x: 50, y: 9, width: 10, height: 10, label: 'Buy now' },
+          { fromFrameId: 'f3', toFrameId: 'f1', x: 0, y: 0, width: 10, height: 10, label: null },
+        ],
+        edges: [
+          { fromFrameId: 'f3', toFrameId: 'f1', count: 2, lastAt: 1 },
+          { fromFrameId: 'f1', toFrameId: 'f2', count: 9, lastAt: 1 },
+        ],
+      },
+      frames,
+    )
+    expect(lines).toHaveLength(4)
+    expect(lines[0]).toBe('"Catalog" (f1) → "Checkout" (f2): 9 real user navigations')
+    expect(lines[1]).toBe('"Home" (f3) → "Catalog" (f1): 2 real user navigations')
+    expect(lines[2]).toContain('links to "Checkout" (f2) via “Buy now”')
+    expect(lines[3]).toBe('"Home" (f3) links to "Catalog" (f1)')
+  })
+
+  it('returns nothing for canvases without flow data', () => {
+    expect(describeSyncFlow({ links: [], edges: [] }, [])).toEqual([])
+  })
+})
+
+/* Import-once: with the grace window elapsed (SYNC_FREEZE_MS=0), a synced
+   screen freezes — later captures don't rewrite it, edges still count. */
+describe('design sync freeze', () => {
+  let frozenServer: Server
+  let owner: Client
+
+  beforeAll(async () => {
+    frozenServer = await startServer(4985, { SYNC_PAGE_INTERVAL_MS: '0', SYNC_FREEZE_MS: '0' })
+    owner = new Client(frozenServer)
+    await owner.signUp('freeze-owner@test.dev', 'Owner')
+  }, 70_000)
+
+  afterAll(() => frozenServer?.stop())
+
+  it('first capture wins; later captures are told the screen is settled', async () => {
+    const canvas = await (await owner.post('/api/canvases', { name: 'Frozen' })).json()
+    const key = await (await owner.post(`/api/canvases/${canvas.id}/sync-keys`, { name: 'app' })).json()
+    const post = (html: string, edges?: unknown[]) =>
+      fetch(`${frozenServer.base}/ingest/${key.secret}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ page: '/home', html, edges }),
+      })
+
+    const first = await post('<html><body><h1>v1</h1></body></html>')
+    expect((await first.json()).created).toBe(true)
+
+    const second = await post('<html><body><h1>v2</h1></body></html>', [{ from: '/home', to: '/about' }])
+    expect(second.headers.get('x-doop-synced')).toBe('1')
+    expect(second.headers.get('x-doop-edges')).toBe('1') // navigations still count
+    expect((await second.json()).frozen).toBe(true)
+
+    const got = await (await owner.get(`/api/canvases/${canvas.id}`)).json()
+    expect(got.frames).toHaveLength(1)
+    expect(got.frames[0].html).toContain('v1') // the rewrite was refused
+    expect(got.frames[0].html).not.toContain('v2')
   })
 })

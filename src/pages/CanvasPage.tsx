@@ -787,8 +787,9 @@ function SyncKeysSection({ canvasId }: { canvasId: string }) {
     <div className="sync-section">
       <h3>Or sync a live app</h3>
       <p className="share-note">
-        For apps a crawler can't reach — behind a login, a VPN, or on localhost. Paste one script tag and the screens
-        people visit land here as frames, kept current as the app changes. The key only writes to this canvas.
+        For apps a crawler can't reach — behind a login, a VPN, or on localhost. Paste one script tag and each screen
+        people visit lands here as a frame, imported once. Delete a frame to re-import it fresh. The key only writes to
+        this canvas.
       </p>
       {(keys ?? []).map((k) => (
         <div key={k.id} className="sync-key">
