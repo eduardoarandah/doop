@@ -12,6 +12,10 @@
  *   data-host  override the doop origin (defaults to where this file loaded from)
  *   data-mask  extra CSS selector whose text is redacted before upload
  *
+ * Installing through a tag manager (GTM etc.)? If it strips data attributes,
+ * set globals in the same tag instead:
+ *   <script>window.doopSyncKey = 'dk_…'; window.doopSyncHost = 'https://yourdoop.example'</script>
+ *
  * Privacy: input values are always dropped, [data-doop-mask] subtrees are
  * redacted, scripts never leave the page. `window.doopSync.capture()` forces
  * a capture; add data-doop-sync-ignore to elements that should never upload.
@@ -19,9 +23,21 @@
 ;(function () {
   'use strict'
   if (window.doopSync) return
+  /* Tag managers re-create script tags when injecting, which can leave
+     document.currentScript null or pointing at the injector — fall back to
+     finding our own tag by its data-key, then to the window.* globals. */
   var script = document.currentScript
+  if (!script || !script.getAttribute('data-key')) {
+    var tagged = document.querySelectorAll('script[data-key]')
+    for (var t = 0; t < tagged.length; t++) {
+      if ((tagged[t].getAttribute('src') || '').indexOf('doop-sync') !== -1) {
+        script = tagged[t]
+        break
+      }
+    }
+  }
   var KEY = (script && script.getAttribute('data-key')) || window.doopSyncKey
-  var HOST = (script && script.getAttribute('data-host')) || ''
+  var HOST = (script && script.getAttribute('data-host')) || window.doopSyncHost || ''
   var MASK = (script && script.getAttribute('data-mask')) || ''
   if (!HOST && script && script.src) {
     try {
