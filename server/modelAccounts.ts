@@ -47,6 +47,8 @@ const AUTH_USER_AGENT = process.env.CHATGPT_AUTH_USER_AGENT || 'doop/0.1 (+https
 
 export type AccountKind = 'chatgpt' | 'openai-key'
 
+const ACCOUNT_KINDS: readonly string[] = ['chatgpt', 'openai-key'] satisfies AccountKind[]
+
 export interface ModelAccount {
   userId: string
   kind: AccountKind
@@ -81,10 +83,16 @@ export function chatgptConnectEnabled(): boolean {
 /* storage                                                          */
 /* ---------------------------------------------------------------- */
 
-function toAccount(row: typeof modelAccounts.$inferSelect): ModelAccount {
+function toAccount(row: typeof modelAccounts.$inferSelect): ModelAccount | null {
+  if (!ACCOUNT_KINDS.includes(row.kind)) {
+    /* a kind this build doesn't know (a rollback after an upgrade, say) —
+       treating it as disconnected beats running it as the wrong provider */
+    console.warn(`[doop-agent] ignoring model account with unknown kind "${row.kind}" for user ${row.userId}`)
+    return null
+  }
   return {
     userId: row.userId,
-    kind: row.kind === 'openai-key' ? 'openai-key' : 'chatgpt',
+    kind: row.kind as AccountKind,
     ...(row.accountId ? { accountId: row.accountId } : {}),
     ...(row.email ? { email: row.email } : {}),
     ...(row.plan ? { plan: row.plan } : {}),

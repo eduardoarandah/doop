@@ -1,6 +1,6 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import type Anthropic from '@anthropic-ai/sdk'
-import { _internal } from '../server/openaiAgent.ts'
+import { _internal, azureResponsesUrl, runAzureTurn } from '../server/openaiAgent.ts'
 import { parseAuthCode } from '../server/modelAccounts.ts'
 
 /**
@@ -165,6 +165,62 @@ describe('ChatGPT redirect parsing', () => {
 
   it('rejects a redirect URL with no code', () => {
     expect(() => parseAuthCode('http://localhost:1455/auth/callback')).toThrow(/no \?code=/)
+  })
+})
+
+describe('Azure OpenAI transport', () => {
+  afterEach(() => vi.unstubAllGlobals())
+
+  it('appends the v1 Responses path to a bare resource endpoint', () => {
+    expect(azureResponsesUrl('https://my-res.openai.azure.com')).toBe(
+      'https://my-res.openai.azure.com/openai/v1/responses',
+    )
+    expect(azureResponsesUrl('https://my-res.openai.azure.com/')).toBe(
+      'https://my-res.openai.azure.com/openai/v1/responses',
+    )
+  })
+
+  it('uses an endpoint that already names …/responses as given (APIM front doors)', () => {
+    expect(azureResponsesUrl('https://gateway.example.com/openai/v1/responses')).toBe(
+      'https://gateway.example.com/openai/v1/responses',
+    )
+  })
+
+  it('authenticates with api-key, runs the deployment, and sends no reasoning block by default', async () => {
+    let seen: { url?: string; headers?: Record<string, string>; body?: Record<string, unknown> } = {}
+    vi.stubGlobal('fetch', async (url: string, init: RequestInit) => {
+      seen = { url, headers: init.headers as Record<string, string>, body: JSON.parse(init.body as string) }
+      return new Response(
+        JSON.stringify({
+          status: 'completed',
+          output: [{ type: 'message', content: [{ type: 'output_text', text: 'done' }] }],
+        }),
+        { status: 200 },
+      )
+    })
+    const result = await runAzureTurn(
+      { endpoint: 'https://my-res.openai.azure.com', deployment: 'my-gpt', apiKey: 'azkey' },
+      { system: 'be a designer', tools: [], messages: [{ role: 'user', content: 'hi' }], maxTokens: 4096 },
+    )
+    expect(result.content).toEqual([{ type: 'text', text: 'done' }])
+    expect(seen.url).toBe('https://my-res.openai.azure.com/openai/v1/responses')
+    expect(seen.headers?.['api-key']).toBe('azkey')
+    expect(seen.headers?.Authorization).toBeUndefined()
+    expect(seen.body?.model).toBe('my-gpt')
+    expect(seen.body?.max_output_tokens).toBe(4096)
+    /* a non-reasoning deployment 400s on a reasoning block — absent unless
+       AZURE_OPENAI_REASONING_EFFORT opts in */
+    expect(seen.body).not.toHaveProperty('reasoning')
+  })
+
+  it('surfaces rejected credentials as an auth error', async () => {
+    vi.stubGlobal('fetch', async () => new Response('denied', { status: 401 }))
+    await expect(
+      runAzureTurn(
+        { endpoint: 'https://my-res.openai.azure.com', deployment: 'my-gpt', apiKey: 'stale' },
+        { system: '', tools: [], messages: [], maxTokens: 100 },
+      ),
+    ).rejects.toThrow(/credentials/)
   })
 })
 

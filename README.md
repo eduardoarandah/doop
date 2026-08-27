@@ -103,7 +103,7 @@ without a human in the loop. Roles (Doop builds; specialists own one pass each �
 accessibility) are defined in [`shared/agents.ts`](shared/agents.ts), and a card can be routed
 through several in order.
 
-The server's own Anthropic key pays for the free tier:
+The server pays for the free tier, on Anthropic by default:
 
 ```bash
 ANTHROPIC_API_KEY=sk-ant-...   # in .env, or the environment of your deployment
@@ -111,6 +111,18 @@ ANTHROPIC_API_KEY=sk-ant-...   # in .env, or the environment of your deployment
 
 Same key gates the **guideline distiller** ([`server/distill.ts`](server/distill.ts)), which proposes
 durable style rules from your canvas.
+
+The free tier can run on **Azure OpenAI** instead — useful when your organisation's credits or
+compliance rules live there:
+
+```bash
+DOOP_AGENT_PROVIDER=azure
+AZURE_OPENAI_ENDPOINT=https://my-resource.openai.azure.com
+AZURE_OPENAI_API_KEY=...
+AZURE_OPENAI_DEPLOYMENT=my-deployment
+```
+
+The distiller stays on `ANTHROPIC_API_KEY` either way and quietly turns off without it.
 
 ### Past the free tasks: connect your own ChatGPT
 
@@ -126,6 +138,10 @@ kinds of account:
   backend that Plus/Pro/Business plans include. Tokens live in `model_accounts` and never reach a
   browser.
 - **OpenAI API key** — pay-as-you-go on the user's own OpenAI account, no subscription involved.
+
+Azure OpenAI is deliberately _not_ a connectable account kind: a user-supplied endpoint would be a
+URL the server fetches with the run's full context — an SSRF vector — so Azure stays a server-level
+provider only.
 
 Either way the user picks their **model tier** in Settings — `gpt-5.6-sol` (flagship),
 `gpt-5.6-terra` (the default workhorse) or `gpt-5.6-luna` (cheap and fast). They are paying for it,
@@ -167,14 +183,20 @@ authenticate over OAuth and drive the canvas from outside, on your own subscript
 Three paths, same canvas: the Doop Agent on our key (free tier), the Doop Agent on your key, or your
 own agent over MCP.
 
-| Variable                   | Default                     | What it does                                                             |
-| -------------------------- | --------------------------- | ------------------------------------------------------------------------ |
-| `ANTHROPIC_API_KEY`        | _unset_                     | Pays for the free Doop Agent tier and the distiller                      |
-| `RESIDENT_TASK_LIMIT`      | `5`                         | Free Doop Agent tasks per account before a connection is needed          |
-| `DOOP_AGENT_MODEL`         | `claude-opus-5`             | Model for the Doop Agent on the server's key                             |
-| `DOOP_AGENT_OPENAI_MODEL`  | `gpt-5.6-terra`             | Default tier on a user's account; each user can pick another in Settings |
-| `CHATGPT_CONNECT_DISABLED` | _unset_                     | `1` hides the ChatGPT flow, leaving the API-key path                     |
-| `DOOP_DISTILL_MODEL`       | `claude-haiku-4-5-20251001` | Model for the guideline distiller                                        |
+| Variable                        | Default                     | What it does                                                             |
+| ------------------------------- | --------------------------- | ------------------------------------------------------------------------ |
+| `DOOP_AGENT_PROVIDER`           | `anthropic`                 | What the free tier runs on: `anthropic` \| `azure`                       |
+| `ANTHROPIC_API_KEY`             | _unset_                     | Pays for the free Doop Agent tier (default provider) and the distiller   |
+| `AZURE_OPENAI_ENDPOINT`         | _unset_                     | The free tier's Azure OpenAI resource, when `DOOP_AGENT_PROVIDER=azure`  |
+| `AZURE_OPENAI_API_KEY`          | _unset_                     | A key of that resource                                                   |
+| `AZURE_OPENAI_DEPLOYMENT`       | _unset_                     | The deployment the free tier runs on                                     |
+| `AZURE_OPENAI_API_VERSION`      | _unset_                     | Pins an `api-version` query parameter; the v1 surface needs none         |
+| `AZURE_OPENAI_REASONING_EFFORT` | _unset_                     | Reasoning effort on Azure runs; unset sends none (non-reasoning-safe)    |
+| `RESIDENT_TASK_LIMIT`           | `5`                         | Free Doop Agent tasks per account before a connection is needed          |
+| `DOOP_AGENT_MODEL`              | `claude-opus-5`             | Model for the Doop Agent on the server's Anthropic key                   |
+| `DOOP_AGENT_OPENAI_MODEL`       | `gpt-5.6-terra`             | Default tier on a user's account; each user can pick another in Settings |
+| `CHATGPT_CONNECT_DISABLED`      | _unset_                     | `1` hides the ChatGPT flow, leaving the API-key path                     |
+| `DOOP_DISTILL_MODEL`            | `claude-haiku-4-5-20251001` | Model for the guideline distiller                                        |
 
 `RESIDENT_TASK_LIMIT` is the free-tier meter for the hosted version. It counts only tasks a user
 _initiates_ — feedback replies and retries on existing work stay free — and users who have connected

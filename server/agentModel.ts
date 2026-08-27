@@ -1,16 +1,20 @@
 import Anthropic from '@anthropic-ai/sdk'
 import { getAccount, withFreshToken } from './modelAccounts.ts'
-import type { ModelAccount } from './modelAccounts.ts'
-import { modelFor, ModelAuthError, runOpenAiTurn } from './openaiAgent.ts'
+import type { AccountKind, ModelAccount } from './modelAccounts.ts'
+import { modelFor, ModelAuthError, runAzureTurn, runOpenAiTurn } from './openaiAgent.ts'
 import type { StopReason, TurnBlock } from './openaiAgent.ts'
 
 /**
  * Which model runs a Doop Agent turn, and on whose bill.
  *
- * The server's own ANTHROPIC_API_KEY pays for the free tasks every account
- * starts with. The moment a user connects a model account of their own — their
- * ChatGPT subscription or their own OpenAI key — their runs move onto it, and
- * the free-task meter stops applying to them entirely.
+ * Two layers, resolved in this order:
+ *
+ *  - a user's own model account (their ChatGPT subscription or an OpenAI API
+ *    key) — the moment one is connected, that user's runs move onto it and
+ *    the free-task meter stops applying to them;
+ *  - the server tier, which pays for the free tasks every account starts
+ *    with. DOOP_AGENT_PROVIDER picks what it runs on: 'anthropic' (the
+ *    default, on ANTHROPIC_API_KEY) or 'azure' (the AZURE_OPENAI_* vars).
  *
  * A run bills exactly ONE person: the requester behind the work it claims. The
  * queue is worked one requester at a time rather than sweeping several people's
@@ -18,7 +22,8 @@ import type { StopReason, TurnBlock } from './openaiAgent.ts'
  * else's request.
  */
 
-export type Provider = 'anthropic' | 'chatgpt' | 'openai-key'
+export type ServerProvider = 'anthropic' | 'azure'
+export type Provider = ServerProvider | AccountKind
 
 export interface AgentTurnRequest {
   /** ordered system blocks; `cache` marks an Anthropic cache breakpoint */
@@ -44,26 +49,23 @@ export interface AgentModel {
 
 export { ModelAuthError }
 
+/* ---------------------------------------------------------------- */
+/* the server tier: pays for everyone's free tasks                  */
+/* ---------------------------------------------------------------- */
+
 const ANTHROPIC_MODEL = process.env.DOOP_AGENT_MODEL || 'claude-opus-5'
 
 let anthropic: Anthropic | null = null
-let warned = false
 
-function anthropicClient(): Anthropic | null {
+function anthropicTier(): AgentModel | null {
   if (!process.env.ANTHROPIC_API_KEY) {
-    if (!warned) {
-      warned = true
-      console.log(
-        '[doop-agent] ANTHROPIC_API_KEY not set — the free Doop Agent tier is off. Users who connect their own ChatGPT subscription still get the agent; everyone else sees queued cards and @mentions go unpicked. See README → "The Doop Agent".',
-      )
-    }
+    warnOnce(
+      '[doop-agent] ANTHROPIC_API_KEY not set — the free Doop Agent tier is off. Users who connect a model account of their own still get the agent; everyone else sees queued cards and @mentions go unpicked. See README → "The Doop Agent".',
+    )
     return null
   }
   if (!anthropic) anthropic = new Anthropic()
-  return anthropic
-}
-
-function anthropicModel(client: Anthropic): AgentModel {
+  const client = anthropic
   return {
     provider: 'anthropic',
     label: `Doop (${ANTHROPIC_MODEL})`,
@@ -92,17 +94,97 @@ function anthropicModel(client: Anthropic): AgentModel {
   }
 }
 
-function openaiModel(account: ModelAccount): AgentModel {
+function azureTier(): AgentModel | null {
+  const endpoint = process.env.AZURE_OPENAI_ENDPOINT
+  const deployment = process.env.AZURE_OPENAI_DEPLOYMENT
+  const apiKey = process.env.AZURE_OPENAI_API_KEY
+  if (!endpoint || !deployment || !apiKey) {
+    warnOnce(
+      '[doop-agent] DOOP_AGENT_PROVIDER=azure needs AZURE_OPENAI_ENDPOINT, AZURE_OPENAI_DEPLOYMENT and AZURE_OPENAI_API_KEY — the free Doop Agent tier is off until all three are set.',
+    )
+    return null
+  }
+  const config = { endpoint, deployment, apiKey }
+  return {
+    provider: 'azure',
+    label: `Doop (${deployment})`,
+    async run(req) {
+      try {
+        return await runAzureTurn(config, {
+          system: joinSystem(req),
+          tools: req.tools,
+          messages: req.messages,
+          maxTokens: req.maxTokens,
+        })
+      } catch (err) {
+        /* these are the SERVER's credentials — "reconnect your account" would
+           send users chasing a connection they don't have */
+        if (err instanceof ModelAuthError) {
+          throw new Error(
+            'Azure OpenAI rejected this server’s credentials — check AZURE_OPENAI_API_KEY and AZURE_OPENAI_DEPLOYMENT',
+            { cause: err },
+          )
+        }
+        throw err
+      }
+    },
+  }
+}
+
+const serverTiers: Record<ServerProvider, () => AgentModel | null> = {
+  anthropic: anthropicTier,
+  azure: azureTier,
+}
+
+function serverProvider(): ServerProvider {
+  const chosen = process.env.DOOP_AGENT_PROVIDER || 'anthropic'
+  if (chosen in serverTiers) return chosen as ServerProvider
+  warnOnce(
+    `[doop-agent] DOOP_AGENT_PROVIDER="${chosen}" is not a server provider (anthropic | azure) — using anthropic.`,
+  )
+  return 'anthropic'
+}
+
+/** What the boot banner reports: which provider the free tier would run on,
+ *  and whether it actually can. */
+export function serverTierInfo(): { provider: ServerProvider; ready: boolean } {
+  const provider = serverProvider()
+  return { provider, ready: serverTiers[provider]() !== null }
+}
+
+const warnedAbout = new Set<string>()
+function warnOnce(message: string) {
+  if (warnedAbout.has(message)) return
+  warnedAbout.add(message)
+  console.log(message)
+}
+
+/* ---------------------------------------------------------------- */
+/* a user's own account                                             */
+/* ---------------------------------------------------------------- */
+
+const BYO_LABELS: Record<AccountKind, string> = {
+  chatgpt: 'ChatGPT',
+  'openai-key': 'OpenAI',
+}
+
+/* the OpenAI-shaped transports take one system string; cache breakpoints are
+   an Anthropic concept and simply flatten away */
+function joinSystem(req: AgentTurnRequest): string {
+  return req.system.map((block) => block.text).join('\n\n')
+}
+
+function byoModel(account: ModelAccount): AgentModel {
   return {
     provider: account.kind,
-    label: `${account.kind === 'chatgpt' ? 'ChatGPT' : 'OpenAI'} (${modelFor(account)})`,
+    label: `${BYO_LABELS[account.kind]} (${modelFor(account)})`,
     userId: account.userId,
     async run(req) {
       /* refreshed per turn, not per run: a long design run outlives an
          hour-long access token */
       const live = await withFreshToken(account)
       return runOpenAiTurn(live, {
-        system: req.system.map((block) => block.text).join('\n\n'),
+        system: joinSystem(req),
         tools: req.tools,
         messages: req.messages,
         maxTokens: req.maxTokens,
@@ -114,9 +196,9 @@ function openaiModel(account: ModelAccount): AgentModel {
 /**
  * Pick the model for one run, billed to exactly one person: `payerId` is the
  * human whose work the run is about to claim. Returns null when nothing can
- * run it — they have no account of their own and there is no server key.
+ * run it — they have no account of their own and the server tier is off.
  *
- * A connected account wins outright: someone who has just linked their ChatGPT
+ * A connected account wins outright: someone who has just linked their own
  * subscription expects the very next task to run on it, and the free tier is a
  * trial to get them here, not a balance to spend down first. It also means
  * connecting stops costing us anything from that moment on.
@@ -128,7 +210,6 @@ export async function pickModel(payerId?: string): Promise<AgentModel | null> {
         return null
       })
     : null
-  if (account) return openaiModel(account)
-  const client = anthropicClient()
-  return client ? anthropicModel(client) : null
+  if (account) return byoModel(account)
+  return serverTiers[serverProvider()]()
 }

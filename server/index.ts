@@ -29,6 +29,7 @@ import * as ingest from './ingest.ts'
 import { seed } from './seed.ts'
 import * as allowance from './allowance.ts'
 import * as modelAccounts from './modelAccounts.ts'
+import { serverTierInfo } from './agentModel.ts'
 import { AGENT_MODELS } from './openaiAgent.ts'
 import { mentionedRole } from '../shared/agents.ts'
 import { colorFor } from '../shared/types.ts'
@@ -1387,9 +1388,10 @@ server.listen(PORT, () => {
   /* The Doop Agent failing silently is the one "why is nothing happening?"
      a self-hoster cannot debug from the UI — board cards and @mentions just
      sit there. Say so at boot, not only when the first card is queued. */
+  const tier = serverTierInfo()
   console.log(
-    process.env.ANTHROPIC_API_KEY
-      ? '⟡ doop agent        on — free tier on this server’s key, then each user’s own ChatGPT/OpenAI account'
-      : '⟡ doop agent        no server key — runs only for users who connect their own ChatGPT subscription or OpenAI key (set ANTHROPIC_API_KEY for a free tier; agents connected over MCP work regardless)',
+    tier.ready
+      ? `⟡ doop agent        on — free tier on this server’s ${tier.provider === 'azure' ? 'Azure OpenAI deployment' : 'Anthropic key'}, then each user’s own model account`
+      : `⟡ doop agent        no server ${tier.provider === 'azure' ? 'Azure config' : 'key'} — runs only for users who connect their own ChatGPT subscription or OpenAI key (${tier.provider === 'azure' ? 'set the AZURE_OPENAI_* vars' : 'set ANTHROPIC_API_KEY'} for a free tier; agents connected over MCP work regardless)`,
   )
 })

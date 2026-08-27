@@ -25,11 +25,12 @@ import { executeGuardedBatch } from './guardedBatch.ts'
  * use, so users see the full show: presence, set_status in the working-now
  * strip, a task in the panel, and edits playing back through the reveal.
  *
- * Which model each run uses is server/agentModel.ts's decision: the server's
- * ANTHROPIC_API_KEY covers the free tier, and past that the run moves onto the
- * model account the requesting human connected (their ChatGPT subscription or
- * OpenAI key). With neither, the queue behaves as it always did — the work
- * waits for the next agent to connect over MCP.
+ * Which model each run uses is server/agentModel.ts's decision: the server
+ * tier (Anthropic by default, or an Azure OpenAI deployment via
+ * DOOP_AGENT_PROVIDER) covers the free tasks, and past that the run moves onto
+ * the model account the requesting human connected (their ChatGPT
+ * subscription or OpenAI key). With neither, the queue behaves as it always
+ * did — the work waits for the next agent to connect over MCP.
  */
 
 const MAX_TURNS = 24
@@ -479,8 +480,10 @@ async function runAgent(canvasId: string, agentName: string, stalled: Set<string
       /* An API/tool crash becomes a visible, manually retryable failure. */
       crashed = true
       /* a dead credential is the one crash a human can actually fix, so it
-         gets its own wording all the way through to the card */
-      staleAccount = err instanceof ModelAuthError
+         gets its own wording all the way through to the card — but only when
+         the credential is theirs: a server-tier run has no account to
+         reconnect, whatever error class its transport leaks */
+      staleAccount = err instanceof ModelAuthError && !!model.userId
       console.error('[resident] run errored', err)
       actions.setAgentStatus(
         canvasId,

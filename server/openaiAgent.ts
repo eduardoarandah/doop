@@ -8,10 +8,15 @@ import type { ModelAccount } from './modelAccounts.ts'
  * Responses API item format, tool-call ids, streaming — is contained here, so
  * server/resident.ts stays a single provider-neutral loop.
  *
- * Two transports, one body:
+ * Three transports, one body:
  *  - a connected ChatGPT subscription, through the same Codex backend the
  *    Codex CLI uses (SSE only, no max_output_tokens);
- *  - a plain OpenAI API key against api.openai.com (ordinary JSON).
+ *  - a plain OpenAI API key against api.openai.com (ordinary JSON);
+ *  - an Azure OpenAI deployment (same Responses API, authenticated with
+ *    Azure's api-key header) — SERVER config only, the free tier when
+ *    DOOP_AGENT_PROVIDER=azure. Deliberately not a connectable per-user
+ *    account: a user-supplied endpoint would be a server-side fetch target,
+ *    i.e. an SSRF into whatever network Doop runs on.
  *
  * The one real impedance mismatch is images. Anthropic returns screenshots
  * inside tool results; the Responses API only accepts text in a
@@ -35,6 +40,12 @@ export const AGENT_MODELS = [
 
 export const DEFAULT_OPENAI_MODEL = process.env.DOOP_AGENT_OPENAI_MODEL || 'gpt-5.6-terra'
 const REASONING_EFFORT = process.env.DOOP_AGENT_OPENAI_EFFORT || 'medium'
+/* Azure deployments are named by their owner and can host non-reasoning
+   models, which reject a `reasoning` block outright — so unlike the OpenAI
+   paths there is no default effort: unset means the parameter stays home. */
+const AZURE_REASONING_EFFORT = process.env.AZURE_OPENAI_REASONING_EFFORT || ''
+/* Azure's v1 surface needs no api-version; older resources can pin one. */
+const AZURE_API_VERSION = process.env.AZURE_OPENAI_API_VERSION || ''
 
 export function isKnownModel(id: string): boolean {
   return AGENT_MODELS.some((model) => model.id === id)
@@ -353,8 +364,52 @@ async function runApiKey(account: ModelAccount, req: TurnRequest): Promise<TurnR
   return fromResponse((await res.json()) as ResponseBody)
 }
 
+/** Everything one Azure OpenAI call needs, straight from the AZURE_OPENAI_*
+ *  env vars — server config, never user input. */
+export interface AzureConfig {
+  /** the resource base (https://….openai.azure.com) or a full …/responses URL */
+  endpoint: string
+  deployment: string
+  apiKey: string
+}
+
+/** The Responses URL for an Azure resource. A bare endpoint gets the v1
+ *  path appended; an endpoint that already names …/responses (an APIM
+ *  front door, say) is used as given. */
+export function azureResponsesUrl(endpoint: string): string {
+  const base = endpoint.replace(/\/+$/, '')
+  const url = /\/responses$/.test(new URL(base).pathname) ? base : `${base}/openai/v1/responses`
+  return AZURE_API_VERSION ? `${url}?api-version=${encodeURIComponent(AZURE_API_VERSION)}` : url
+}
+
+/** One turn against an Azure OpenAI deployment. */
+export async function runAzureTurn(config: AzureConfig, req: TurnRequest): Promise<TurnResult> {
+  const res = await fetch(azureResponsesUrl(config.endpoint), {
+    method: 'POST',
+    headers: { 'api-key': config.apiKey, 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      model: config.deployment,
+      instructions: req.system,
+      input: toInput(req.messages),
+      tools: toTools(req.tools),
+      tool_choice: 'auto',
+      parallel_tool_calls: false,
+      ...(AZURE_REASONING_EFFORT ? { reasoning: { effort: AZURE_REASONING_EFFORT } } : {}),
+      max_output_tokens: req.maxTokens,
+      store: false,
+    }),
+  })
+  if (!res.ok) throw await failure(res, 'Azure OpenAI')
+  return fromResponse((await res.json()) as ResponseBody)
+}
+
+const transports: Record<ModelAccount['kind'], (account: ModelAccount, req: TurnRequest) => Promise<TurnResult>> = {
+  chatgpt: runChatgpt,
+  'openai-key': runApiKey,
+}
+
 export function runOpenAiTurn(account: ModelAccount, req: TurnRequest): Promise<TurnResult> {
-  return account.kind === 'chatgpt' ? runChatgpt(account, req) : runApiKey(account, req)
+  return transports[account.kind](account, req)
 }
 
 /* exported for tests */
