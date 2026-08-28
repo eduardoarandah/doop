@@ -49,33 +49,38 @@ const TRAFFIC_LIGHTS: (f64, f64) = (13.0, 21.0);
 /// shell puts them back after every such event.
 #[cfg(target_os = "macos")]
 fn place_traffic_lights(ns_window_ptr: *mut std::ffi::c_void) {
-    use cocoa::appkit::{NSView, NSWindow, NSWindowButton};
-    use cocoa::base::id;
-    use cocoa::foundation::NSRect;
-    use objc::{msg_send, sel, sel_impl};
+    use objc2_app_kit::{NSWindow, NSWindowButton};
 
-    let ns_window = ns_window_ptr as id;
+    // SAFETY: Tauri hands out a live NSWindow pointer, and window events are
+    // delivered on the main thread — the only place AppKit may be touched.
     unsafe {
-        let close = ns_window.standardWindowButton_(NSWindowButton::NSWindowCloseButton);
-        let mini = ns_window.standardWindowButton_(NSWindowButton::NSWindowMiniaturizeButton);
-        let zoom = ns_window.standardWindowButton_(NSWindowButton::NSWindowZoomButton);
-        if close.is_null() || mini.is_null() || zoom.is_null() {
+        let ns_window = &*ns_window_ptr.cast::<NSWindow>();
+        let (Some(close), Some(mini), Some(zoom)) = (
+            ns_window.standardWindowButton(NSWindowButton::CloseButton),
+            ns_window.standardWindowButton(NSWindowButton::MiniaturizeButton),
+            ns_window.standardWindowButton(NSWindowButton::ZoomButton),
+        ) else {
             return;
-        }
+        };
+        let (Some(container), Some(content)) = (
+            close.superview().and_then(|v| v.superview()),
+            ns_window.contentView(),
+        ) else {
+            return;
+        };
         // The buttons live in a title-bar container view anchored to the top;
         // grow it so the buttons can sit lower, then move each button.
-        let container = close.superview().superview();
-        let button = NSView::frame(close);
+        let button = close.frame();
         let bar_height = button.size.height + TRAFFIC_LIGHTS.1;
-        let mut container_rect = NSView::frame(container);
-        container_rect.origin.y = NSView::frame(ns_window.contentView()).size.height - bar_height;
+        let mut container_rect = container.frame();
+        container_rect.origin.y = content.frame().size.height - bar_height;
         container_rect.size.height = bar_height;
-        let _: () = msg_send![container, setFrame: container_rect];
-        let gap = NSView::frame(mini).origin.x - button.origin.x;
+        container.setFrame(container_rect);
+        let gap = mini.frame().origin.x - button.origin.x;
         for (i, b) in [close, mini, zoom].into_iter().enumerate() {
-            let mut rect: NSRect = NSView::frame(b);
-            rect.origin.x = TRAFFIC_LIGHTS.0 + i as f64 * gap;
-            b.setFrameOrigin(rect.origin);
+            let mut origin = b.frame().origin;
+            origin.x = TRAFFIC_LIGHTS.0 + i as f64 * gap;
+            b.setFrameOrigin(origin);
         }
     }
 }
