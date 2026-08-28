@@ -45,14 +45,14 @@ function SegmentedItem({ className, ...props }: React.ComponentProps<typeof Togg
 
 /** Icon-only variant: a bordered shell of square buttons (grid / list). */
 function SegmentedIcons({ className, ...props }: React.ComponentProps<typeof Segmented>) {
-  return <Segmented className={cn('gap-0 overflow-hidden bg-surface p-0', className)} {...props} />
+  return <Segmented className={cn('gap-0 overflow-hidden bg-surface', className)} {...props} />
 }
 
 function SegmentedIconItem({ className, ...props }: React.ComponentProps<typeof SegmentedItem>) {
   return (
     <SegmentedItem
       className={cn(
-        'grid min-h-10 flex-none place-items-center rounded-none px-[11px] text-ink-faint data-[state=on]:bg-paper-deep data-[state=on]:text-ink sm:min-h-0 sm:py-[7px]',
+        'grid min-h-10 flex-none place-items-center rounded-[7px] px-[11px] text-ink-faint data-[state=on]:bg-paper-deep data-[state=on]:text-ink sm:min-h-0 sm:py-[7px]',
         className,
       )}
       {...props}
