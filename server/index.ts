@@ -8,6 +8,7 @@ import { toNodeHandler, fromNodeHeaders } from 'better-auth/node'
 import { oAuthDiscoveryMetadata } from 'better-auth/plugins'
 import { WebSocketServer, WebSocket } from 'ws'
 import { store } from './store.ts'
+import { getImage } from './previews.ts'
 import * as actions from './actions.ts'
 import { canAccessCanvas, hasDurableCanvasAccess, isAdmin } from './access.ts'
 import { auth, initAuth, syncAdmins, getUserName, PUBLIC_ORIGIN } from './auth.ts'
@@ -280,14 +281,9 @@ app.use('/relay', async (req, res) => {
 /* Public frame images: /i/<frameId>.png|jpg — shareable/hotlinkable   */
 /* (og:image etc). Unauthenticated by the same unguessable-id logic as */
 /* canvas share links; renders the CURRENT frame, so embedded images   */
-/* stay up to date as the design iterates. Cached per frame version,   */
-/* rate-limited per IP because each cache miss boots a Chromium page.  */
+/* stay up to date as the design iterates. Caching, rate limiting and  */
+/* render dispatch live in previews.ts — this route is HTTP only.      */
 /* ------------------------------------------------------------------ */
-
-const imgCache = new Map<string, { buf: Buffer; updatedAt: number; at: number }>()
-const IMG_CACHE_MS = 5 * 60_000
-const renderHits = new Map<string, number[]>()
-const RENDERS_PER_MIN = 12
 
 app.get('/i/:id.:ext', async (req, res) => {
   const { id, ext } = req.params as { id: string; ext: string }
@@ -295,34 +291,30 @@ app.get('/i/:id.:ext', async (req, res) => {
   const frame = store.getFrame(id)
   if (!frame) return res.status(404).end()
 
-  const scale = req.query.scale === '2' ? 2 : 1
-  const quality = Math.min(100, Math.max(1, Number(req.query.quality) || 90))
-  const key = `${id}:${ext}:${scale}:${ext === 'jpg' ? quality : ''}`
-  const cached = imgCache.get(key)
-  let buf = cached && cached.updatedAt === frame.updatedAt && Date.now() - cached.at < IMG_CACHE_MS ? cached.buf : null
-
-  if (!buf) {
-    const ip = req.ip ?? 'unknown'
-    const now = Date.now()
-    const hits = (renderHits.get(ip) ?? []).filter((t) => now - t < 60_000)
-    if (hits.length >= RENDERS_PER_MIN) {
-      res.set('Retry-After', '60')
-      return res.status(429).json({ error: 'render rate limit — cached URLs are unaffected' })
-    }
-    hits.push(now)
-    renderHits.set(ip, hits)
-    try {
-      const { renderFrame } = await import('./screenshot.ts')
-      buf = await renderFrame(frame, scale as 1 | 2, { type: ext === 'jpg' ? 'jpeg' : 'png', quality })
-      imgCache.set(key, { buf, updatedAt: frame.updatedAt, at: Date.now() })
-      if (imgCache.size > 200) {
-        const oldest = [...imgCache.entries()].sort((a, b) => a[1].at - b[1].at)[0]
-        if (oldest) imgCache.delete(oldest[0])
-      }
-    } catch (e) {
-      return res.status(500).json({ error: e instanceof Error ? e.message : 'render failed' })
-    }
+  let result: Awaited<ReturnType<typeof getImage>>
+  try {
+    result = await getImage(frame, {
+      ext,
+      scale: req.query.scale === '2' ? 2 : 1,
+      quality: Math.min(100, Math.max(1, Number(req.query.quality) || 90)),
+      /* ?preview — the dashboard-card variant; see previews.ts */
+      preview: req.query.preview !== undefined,
+      ip: req.ip ?? 'unknown',
+      /* the render limit targets anonymous hotlink abuse — a logged-in user
+         loading a dashboard of many canvases shouldn't hit it (and behind
+         the Railway proxy many users can share one req.ip). Only called
+         when the budget is exhausted, so cached serves stay auth-free. */
+      isAuthenticated: async () =>
+        !!(await auth.api.getSession({ headers: fromNodeHeaders(req.headers) }).catch(() => null)),
+    })
+  } catch (e) {
+    return res.status(500).json({ error: e instanceof Error ? e.message : 'render failed' })
   }
+  if (result.status === 'rate-limited') {
+    res.set('Retry-After', '60')
+    return res.status(429).json({ error: 'render rate limit — cached URLs are unaffected' })
+  }
+  const { buf } = result
 
   res.set('Content-Type', ext === 'jpg' ? 'image/jpeg' : 'image/png')
   res.set('Cache-Control', 'public, max-age=60')

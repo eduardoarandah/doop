@@ -228,19 +228,7 @@ export function Admin() {
                 {canvases.map((c) => (
                   <div key={c.id} className={cn(cardShell, 'flex flex-col')}>
                     <div className="relative grid aspect-[4/3] place-items-center overflow-hidden border-b border-line-soft [background:radial-gradient(circle,var(--dot)_1px,transparent_1px)_0_0/18px_18px,var(--paper-deep)]">
-                      {c.previewFrameId ? (
-                        <img
-                          className="h-full w-full object-cover object-top"
-                          src={`/i/${c.previewFrameId}.jpg`}
-                          alt=""
-                          loading="lazy"
-                          onError={(e) => {
-                            e.currentTarget.style.display = 'none'
-                          }}
-                        />
-                      ) : (
-                        <span className="text-[12px] text-ink-faint">empty canvas</span>
-                      )}
+                      <CanvasPreview frameId={c.previewFrameId} />
                     </div>
                     <div className="flex flex-1 flex-col px-3 pt-2.5 pb-3">
                       <div className="truncate font-display text-[13.5px] font-semibold">{c.name}</div>
@@ -325,5 +313,25 @@ export function Admin() {
         </DashContent>
       </DashMain>
     </DashLayout>
+  )
+}
+
+/** Same contract as the Home dashboard's Preview: a failed render must look
+ *  different from an empty canvas, and cards request the cheap ?preview
+ *  render rather than the full-size og:image one. */
+function CanvasPreview({ frameId }: { frameId?: string }) {
+  /* which frame failed, not whether — a new previewFrameId must retry
+     rather than inherit the old frame's failure */
+  const [failedId, setFailedId] = useState<string | null>(null)
+  if (!frameId) return <span className="text-[12px] text-ink-faint">empty canvas</span>
+  if (failedId === frameId) return <span className="text-[12px] text-ink-faint">preview unavailable</span>
+  return (
+    <img
+      className="h-full w-full object-cover object-top"
+      src={`/i/${frameId}.jpg?preview`}
+      alt=""
+      loading="lazy"
+      onError={() => setFailedId(frameId)}
+    />
   )
 }

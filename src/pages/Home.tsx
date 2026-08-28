@@ -398,16 +398,21 @@ function remove(id: string, done: () => void) {
 }
 
 function Preview({ canvas, blankSize = 'text-[12px]' }: { canvas: CanvasMeta; blankSize?: string }) {
+  /* which frame failed, not whether — a new previewFrameId must retry
+     rather than inherit the old frame's failure */
+  const [failedId, setFailedId] = useState<string | null>(null)
   if (!canvas.previewFrameId) return <span className={cn('text-ink-faint', blankSize)}>empty canvas</span>
+  /* a failed render must look different from an empty canvas — silence here
+     made preview outages undiagnosable */
+  if (failedId === canvas.previewFrameId)
+    return <span className={cn('text-ink-faint', blankSize)}>preview unavailable</span>
   return (
     <img
-      src={`/i/${canvas.previewFrameId}.jpg`}
+      src={`/i/${canvas.previewFrameId}.jpg?preview`}
       alt=""
       loading="lazy"
       className="h-full w-full object-cover object-top"
-      onError={(e) => {
-        e.currentTarget.style.display = 'none'
-      }}
+      onError={() => setFailedId(canvas.previewFrameId ?? null)}
     />
   )
 }

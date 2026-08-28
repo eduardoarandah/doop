@@ -1,6 +1,7 @@
 import { nanoid } from 'nanoid'
 import { store } from './store.ts'
 import * as persist from './db/persist.ts'
+import * as thumbs from './thumbs.ts'
 import { colorFor } from '../shared/types.ts'
 import { DEFAULT_ROLE_ID, mentionedRole, normalizePipeline, roleByAgentName, roleName } from '../shared/agents.ts'
 import { decodeEscapedHtml, looksEscapedHtml, repairEscapedHtml } from './escapedHtml.ts'
@@ -996,6 +997,7 @@ export function deleteFrame(frameId: string, actor: Actor): Frame | undefined {
   finishReveal(frameId)
   const frame = store.deleteFrame(frameId)
   if (!frame) return undefined
+  thumbs.purge(frameId)
   broadcast(frame.canvasId, { type: 'frame:deleted', frameId, actor })
   logActivity(frame.canvasId, actor, `deleted frame “${frame.name}”`, frame.id)
   touch(frame.canvasId, actor, null)
@@ -1006,6 +1008,7 @@ export function deleteFrame(frameId: string, actor: Actor): Frame | undefined {
 export function deleteCanvas(canvasId: string): boolean {
   const c = store.deleteCanvas(canvasId)
   if (!c) return false
+  for (const f of c.frames) thumbs.purge(f.id)
   broadcast(canvasId, { type: 'canvas:deleted' })
   taskLog.delete(canvasId)
   feedbackLog.delete(canvasId)

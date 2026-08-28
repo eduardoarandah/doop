@@ -16,10 +16,13 @@ const DISK_DIR = path.join(process.cwd(), 'data', 'assets')
 
 export const storageMode: 'bucket' | 'disk' = BUCKET ? 'bucket' : 'disk'
 
-/* keys are `<nanoid>.<ext>` — anything else is a bug, and in disk mode the
-   check doubles as the path-traversal guard */
+/* keys are `<nanoid>.<ext>`, optionally under the `thumb/` prefix (derived
+   frame previews — a folder of their own so they can be purged or lifecycle-
+   ruled without touching user uploads). Anything else is a bug, and in disk
+   mode the check doubles as the path-traversal guard: one known literal
+   prefix, no dots or slashes in the name. */
 function assertKey(key: string) {
-  if (!/^[A-Za-z0-9_-]+\.[a-z0-9]+$/.test(key)) throw new Error(`malformed storage key: ${key}`)
+  if (!/^(thumb\/)?[A-Za-z0-9_-]+\.[a-z0-9]+$/.test(key)) throw new Error(`malformed storage key: ${key}`)
 }
 
 let s3: S3Client | undefined
@@ -46,8 +49,18 @@ export async function putObject(key: string, body: Buffer, mime: string): Promis
     await (await client()).send(new PutObjectCommand({ Bucket: BUCKET, Key: key, Body: body, ContentType: mime }))
     return
   }
-  await fs.mkdir(DISK_DIR, { recursive: true })
+  await fs.mkdir(path.dirname(path.join(DISK_DIR, key)), { recursive: true })
   await fs.writeFile(path.join(DISK_DIR, key), body)
+}
+
+export async function deleteObject(key: string): Promise<void> {
+  assertKey(key)
+  if (BUCKET) {
+    const { DeleteObjectCommand } = await import('@aws-sdk/client-s3')
+    await (await client()).send(new DeleteObjectCommand({ Bucket: BUCKET, Key: key }))
+    return
+  }
+  await fs.rm(path.join(DISK_DIR, key), { force: true })
 }
 
 export async function getObject(key: string): Promise<Buffer | null> {
