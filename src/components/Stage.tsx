@@ -130,6 +130,8 @@ export function Stage({ onAddFrame }: { onAddFrame: () => void }) {
       zoom,
     })
     select(f.id)
+    /* a shared frame link asks for this exact frame — show its details too */
+    useStore.getState().setInspectorOpen(true)
   }
 
   function fit() {

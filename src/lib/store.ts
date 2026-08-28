@@ -39,6 +39,9 @@ interface State {
    *  toast anywhere in the app can jump straight to the Memory tab */
   panelTab: 'tasks' | 'activity' | 'memory'
   selectedId: string | null
+  /** the Inspector panel is showing — opened by clicking a frame's name, not
+   *  by mere selection, so clicking around a frame doesn't slide the panel in */
+  inspectorOpen: boolean
   /** open frame context menu; deferPanel hides the Inspector until it closes
    *  (right-click selecting a frame must not slide a panel in under the menu) */
   ctxMenu: { frameId: string; deferPanel: boolean } | null
@@ -96,6 +99,7 @@ interface State {
   allowanceChanged(): void
   requestFlyTo(frameId: string): void
   select(id: string | null): void
+  setInspectorOpen(v: boolean): void
   openCtxMenu(menu: { frameId: string; deferPanel: boolean }): void
   closeCtxMenu(): void
   setViewport(v: Viewport): void
@@ -119,6 +123,7 @@ export const useStore = create<State>((set, get) => ({
   allowanceVersion: 0,
   flyTo: null,
   selectedId: null,
+  inspectorOpen: false,
   ctxMenu: null,
   viewport: { x: 0, y: 0, zoom: 1 },
   snapGuides: [],
@@ -247,7 +252,12 @@ export const useStore = create<State>((set, get) => ({
   setLimitWall: (limitWall) => set({ limitWall }),
   allowanceChanged: () => set((s) => ({ allowanceVersion: s.allowanceVersion + 1 })),
   requestFlyTo: (frameId) => set({ flyTo: { frameId, at: Date.now() } }),
-  select: (selectedId) => set({ selectedId }),
+  /* selecting a different frame (or deselecting) closes the Inspector — the
+     panel must not follow surface clicks, paste, or undo onto another frame.
+     Re-selecting the same frame keeps an open panel open. */
+  select: (selectedId) =>
+    set((s) => (s.selectedId === selectedId ? { selectedId } : { selectedId, inspectorOpen: false })),
+  setInspectorOpen: (inspectorOpen) => set({ inspectorOpen }),
   openCtxMenu: (ctxMenu) => set({ ctxMenu }),
   closeCtxMenu: () => set({ ctxMenu: null }),
   setViewport: (viewport) => set({ viewport }),

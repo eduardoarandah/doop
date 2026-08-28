@@ -83,7 +83,7 @@ export const FrameView = memo(function FrameView({ frame, raster }: { frame: Fra
     }, 50),
   ).current
 
-  function startDrag(e: React.PointerEvent, mode: 'move' | 'resize', probeOnClick = false) {
+  function startDrag(e: React.PointerEvent, mode: 'move' | 'resize', probeOnClick = false, panelOnClick = false) {
     if (e.button !== 0) return
     e.stopPropagation()
     e.preventDefault()
@@ -131,6 +131,8 @@ export const FrameView = memo(function FrameView({ frame, raster }: { frame: Fra
          the cursor: probe it and show the element toolbar */
       if (!moved && probeOnClick) probeAt(off.x, off.y)
       else if (moved) closePopovers()
+      /* a click (no drag) on the frame name opens the details panel */
+      if (!moved && panelOnClick) useStore.getState().setInspectorOpen(true)
     }
     window.addEventListener('pointermove', onMove)
     window.addEventListener('pointerup', onUp)
@@ -403,7 +405,7 @@ export const FrameView = memo(function FrameView({ frame, raster }: { frame: Fra
               'absolute -top-[26px] left-0 right-0 flex origin-bottom-left cursor-grab select-none items-center gap-2 whitespace-nowrap text-[12px] font-semibold text-ink-soft',
               COUNTER_SCALE,
             )}
-            onPointerDown={(e) => startDrag(e, 'move')}
+            onPointerDown={(e) => startDrag(e, 'move', false, true)}
           >
             <span className="overflow-hidden text-ellipsis">{frame.name}</span>
             <span className="flex gap-1">

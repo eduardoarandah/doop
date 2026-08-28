@@ -209,6 +209,9 @@ export function CanvasPage({ canvasId }: { canvasId: string }) {
   )
 
   const selectedFrame = canvas?.frames.find((f) => f.id === selectedId) ?? null
+  /* the panel only shows when a frame-name click (or deep link) opened it —
+     selecting a frame by clicking its surface must not slide it in */
+  const inspectorOpen = useStore((s) => s.inspectorOpen)
   /* a right-click that selected the frame keeps the Inspector out until the
      context menu closes — it would slide in right under the open menu */
   const deferPanel = useStore((s) => !!s.ctxMenu?.deferPanel)
@@ -373,7 +376,7 @@ export function CanvasPage({ canvasId }: { canvasId: string }) {
             <WorkingNow />
             <PromptBar canvasId={canvasId} />
             <Onboarding />
-            {!isMobile && selectedFrame && !deferPanel && <Inspector frame={selectedFrame} />}
+            {!isMobile && selectedFrame && inspectorOpen && !deferPanel && <Inspector frame={selectedFrame} />}
             {!isMobile && showActivity && <ActivityPanel onClose={() => setShowActivity(false)} />}
           </>
         )}
@@ -424,7 +427,7 @@ export function CanvasPage({ canvasId }: { canvasId: string }) {
             </SheetContent>
           </Sheet>
           <Sheet
-            open={!!selectedFrame && !deferPanel}
+            open={!!selectedFrame && inspectorOpen && !deferPanel}
             onOpenChange={(open) => {
               if (!open) select(null)
             }}
