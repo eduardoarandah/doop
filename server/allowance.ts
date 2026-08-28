@@ -9,12 +9,14 @@ import type { AccountKind } from './modelAccounts.ts'
  * Free-tier metering for the resident design team. Anything that triggers
  * resident work consumes one of RESIDENT_TASK_LIMIT free tasks: a board card,
  * an element comment that @mentions a resident, feedback on a task, and every
- * retry. Two things lift the meter entirely: connecting your own MCP agent
- * (Claude Code, Codex — your subscription, your model, driving the canvas
- * from outside), or connecting a model account so the Doop Agent itself runs
- * on your ChatGPT subscription or OpenAI key. Both take effect immediately —
- * a connected user is never metered again, and their remaining free tasks
- * simply stop being relevant.
+ * retry. Connecting a model account lifts the meter entirely — the Doop Agent
+ * itself then runs on the user's ChatGPT subscription or OpenAI key,
+ * immediately, without spending remaining free tasks first.
+ *
+ * Connecting an MCP agent (Claude Code, Codex) does NOT lift it: those
+ * sessions run on the user's own model already, but resident tasks still
+ * bill a credential, and an OAuth token ever issued must not turn into
+ * unlimited runs on the server's key.
  *
  * The default is 0: the Doop Agent runs on an account the user connects, from
  * the first task. Self-hosters footing their own model bill can grant an
@@ -77,11 +79,10 @@ export async function getAllowance(userId: string): Promise<Allowance> {
 }
 
 /** Spend one resident task. ok:false = the free tier is used up and the user
- *  has neither connected an agent of their own nor a model account for the
- *  Doop Agent to run on. */
+ *  has no model account for the Doop Agent to run on. */
 export async function consumeResidentTask(userId: string): Promise<Allowance & { ok: boolean }> {
   const current = await getAllowance(userId)
-  if (current.connected || current.byoModel) return { ...current, ok: true }
+  if (current.byoModel) return { ...current, ok: true }
   if (current.used >= current.limit) return { ...current, ok: false }
   /* guarded upsert: concurrent requests can never push `used` past the limit */
   const rows = await db

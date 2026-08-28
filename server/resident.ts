@@ -1,6 +1,7 @@
 import type Anthropic from '@anthropic-ai/sdk'
 import { store } from './store.ts'
 import { ModelAuthError, pickModel } from './agentModel.ts'
+import { RESIDENT_TASK_LIMIT } from './allowance.ts'
 import * as actions from './actions.ts'
 import { inspectFrame, renderFrame } from './screenshot.ts'
 import { AGENT_ROLES, DEFAULT_ROLE_ID, roleById, roleByAgentName, roleName } from '../shared/agents.ts'
@@ -198,6 +199,19 @@ async function runAgent(canvasId: string, agentName: string, stalled: Set<string
   const canvasOwner = store.getCanvas(canvasId)?.ownerId
   const model = await pickModel(payer || canvasOwner)
   if (!model) {
+    stalled.add(payer)
+    return 'no-model'
+  }
+  /* With no free tier, the server's key never pays for resident work. Work
+     can still reach this point without a payable account — queued before the
+     account was disconnected, or before metering tightened — and it must
+     fail visibly with a fix, not crash on a key that was never meant to pay. */
+  if (!model.userId && RESIDENT_TASK_LIMIT <= 0) {
+    const reason =
+      'The Doop Agent needs a connected account — connect your ChatGPT subscription or OpenAI key in Settings, then retry.'
+    for (const f of actions.takeFeedbackFor(canvasId, role.name, payer)) actions.failTaskFeedback(f.id, reason)
+    for (const c of actions.takeAgentCommentsFor(canvasId, role.name, payer)) actions.failComment(c.id, reason)
+    for (const c of actions.takeQueuedCardsFor(canvasId, role.name, payer)) actions.failCard(canvasId, c.id, reason)
     stalled.add(payer)
     return 'no-model'
   }

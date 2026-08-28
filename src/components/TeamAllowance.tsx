@@ -6,7 +6,6 @@ import { useStore } from '../lib/store'
 import { navigate } from '../App'
 import { ConnectBody, AgentArrival } from './ConnectModal'
 import { Button } from './ui/button'
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from './ui/collapsible'
 import { Modal, ModalActions, ModalLede, ModalTitle } from './ui/modal'
 import { cn } from '@/lib/utils'
 
@@ -36,7 +35,7 @@ export function isResidentLimit(err: unknown): boolean {
 }
 
 export function MeterLine({ allowance }: { allowance: Allowance | null }) {
-  if (!allowance || allowance.connected) return null
+  if (!allowance) return null
   /* their own account is behind the agent now — say so instead of counting,
      and say it even where there is no free tier to count (limit 0) */
   if (allowance.byoModel) {
@@ -66,7 +65,6 @@ export function MeterLine({ allowance }: { allowance: Allowance | null }) {
 }
 
 export function LimitWall({ canvasId, onClose }: { canvasId: string; onClose: () => void }) {
-  const [showMcp, setShowMcp] = useState(false)
   const { allowance } = useAllowance()
   /* "used up" only fits a server that granted free tasks in the first place;
      everywhere else (the default, limit 0) this wall IS the getting-started
@@ -109,17 +107,17 @@ export function LimitWall({ canvasId, onClose }: { canvasId: string; onClose: ()
           </Button>
         </ModalActions>
 
-        <Collapsible open={showMcp} onOpenChange={setShowMcp}>
-          <CollapsibleTrigger className="mt-4 text-[12.5px] text-ink-faint hover:text-ink">
+        {/* the second path stays fully visible — a divider, not a disclosure:
+            people who live in Claude Code/Codex should see it without hunting */}
+        <div className="mt-5 border-t border-line pt-4">
+          <p className="text-[12.5px] font-semibold text-ink">
             Or drive the canvas from your own agent (Claude Code, Codex)
-          </CollapsibleTrigger>
-          <CollapsibleContent>
-            <ConnectBody canvasId={canvasId} />
-            <ModalActions>
-              <AgentArrival />
-            </ModalActions>
-          </CollapsibleContent>
-        </Collapsible>
+          </p>
+          <ConnectBody canvasId={canvasId} />
+          <ModalActions>
+            <AgentArrival />
+          </ModalActions>
+        </div>
 
         <ModalActions>
           <Button onClick={onClose}>Close</Button>

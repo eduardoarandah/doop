@@ -203,11 +203,12 @@ own agent over MCP.
 | `DOOP_DISTILL_MODEL`            | `claude-haiku-4-5-20251001` | Model for the guideline distiller                                                    |
 
 `RESIDENT_TASK_LIMIT` is the free-tier meter. By default it is `0`: the Doop Agent only runs once
-the user connects a model account (their ChatGPT subscription or an OpenAI key) or their own MCP
-agent — connected users are never metered. Set it above 0 to grant that many free tasks on the
-server's key; everything that triggers resident work counts, including feedback and retries. There
-is no "unlimited" value: self-hosting with your own key, set it to a large number, since you're
-paying Anthropic directly either way.
+the user connects a model account (their ChatGPT subscription or an OpenAI key) — a connected
+account is never metered. Connecting your own MCP agent does not lift the meter: it runs on your
+model when _it_ designs, but resident tasks still bill a credential. Set the limit above 0 to
+grant that many free tasks on the server's key; everything that triggers resident work counts,
+including feedback and retries. There is no "unlimited" value: self-hosting with your own key, set
+it to a large number, since you're paying Anthropic directly either way.
 
 ## Accounts
 

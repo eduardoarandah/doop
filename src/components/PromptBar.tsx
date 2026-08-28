@@ -111,17 +111,16 @@ export function PromptBar({ canvasId }: { canvasId: string }) {
   async function submit(prompt: string) {
     const clean = prompt.trim()
     if (!clean || busy) return
-    /* known-doomed send: no free tasks and nothing connected. Open the wall
+    /* known-doomed send: no free tasks and no model account. Open the wall
        up front instead of uploading attachments only to 403 — but confirm
-       against the server first, since connecting an MCP agent happens
-       out-of-band and the cached allowance can be stale. The server enforces
-       either way, so an unreachable check just falls through. Text stays in
-       place. */
-    if (allowance && !allowance.connected && !allowance.byoModel && allowance.used >= allowance.limit) {
+       against the server first, since the cached allowance can be stale
+       (an account connected in another tab). The server enforces either
+       way, so an unreachable check just falls through. Text stays in place. */
+    if (allowance && !allowance.byoModel && allowance.used >= allowance.limit) {
       setBusy(true)
       const fresh = await api.agentAllowance().catch(() => null)
       setBusy(false)
-      if (fresh && !fresh.connected && !fresh.byoModel && fresh.used >= fresh.limit) {
+      if (fresh && !fresh.byoModel && fresh.used >= fresh.limit) {
         useStore.getState().setLimitWall(true)
         return
       }
