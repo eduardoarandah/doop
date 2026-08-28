@@ -7,6 +7,7 @@ import { store } from './store.ts'
 import * as actions from './actions.ts'
 import { canAccessCanvas } from './access.ts'
 import { auth, getUserName, isBanned, PUBLIC_ORIGIN } from './auth.ts'
+import { capture, captureThrottled } from './analytics.ts'
 import { renderFrame } from './screenshot.ts'
 import { DOOP_GUIDE, GUIDE_TOPICS } from './guide.ts'
 import { ESCAPED_HTML_NOTE, looksEscapedHtml } from './escapedHtml.ts'
@@ -1156,6 +1157,23 @@ export async function handleMcpRequest(req: Request, res: Response) {
       id: null,
     })
     return
+  }
+  /* A custom (bring-your-own) agent talking to us is the behavior we want to
+     grow — instrument it. `initialize` marks a fresh client session (and is
+     the only message carrying the client's name); tool calls mark actual use,
+     throttled because one design task is dozens of calls. */
+  if (session.userId) {
+    const msgs = Array.isArray(req.body) ? req.body : [req.body]
+    for (const msg of msgs) {
+      if (msg?.method === 'initialize') {
+        capture(session.userId, 'custom_agent_connected', {
+          agent_client: msg.params?.clientInfo?.name,
+          agent_client_version: msg.params?.clientInfo?.version,
+        })
+      } else if (msg?.method === 'tools/call') {
+        captureThrottled(session.userId, 'custom_agent_used', { first_tool: msg.params?.name })
+      }
+    }
   }
   const owner = session.userId ? await getUserName(session.userId) : undefined
   const server = buildMcpServer(owner, session.userId ?? undefined)
