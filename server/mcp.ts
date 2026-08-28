@@ -773,9 +773,9 @@ export function buildMcpServer(owner?: string, ownerId?: string): McpServer {
     {
       title: 'Search icons',
       description:
-        'Search 200,000+ open-source UI icons (Iconify: Material, Lucide, Tabler, Phosphor, …) and get hotlinkable SVG URLs for frame HTML. Search the concept ("shopping cart", "arrow right"). Results are semantically named ids — pick by name. For company/brand logos use search_logos instead.',
+        'Search 200,000+ open-source UI icons (Iconify: Material, Lucide, Tabler, Phosphor, …) and get hotlinkable SVG URLs for frame HTML. Search one concept per call ("shopping cart", "arrow right") — multi-concept queries return nothing; call once per icon. Results are semantically named ids — pick by name. For company/brand logos use search_logos instead.',
       inputSchema: {
-        query: z.string().describe('Icon concept, e.g. "shopping cart"'),
+        query: z.string().describe('A single icon concept, e.g. "light bulb"'),
         limit: z.number().min(1).max(48).optional().describe('Max results, default 24'),
         canvas_id: z.string().optional().describe('The canvas you are designing on (lets human feedback reach you)'),
         agent_name: agentName,
@@ -802,9 +802,9 @@ export function buildMcpServer(owner?: string, ownerId?: string): McpServer {
     {
       title: 'Search company logos',
       description:
-        'Find a company\'s logo by brand name or domain — returns the company\'s real mark as a hotlinkable URL (a thumbnail is included when possible so you can confirm the brand), plus open-source vector marks (SVG) for well-known brands. The exact domain ("acme.io") resolves far more reliably than a name ("Acme"). Use for customer-logo walls, "works with" integration rows, testimonial cards, press bars. Mind each result\'s size guidance: favicon-sourced logos are small rasters — never scale them up.',
+        'Find a company\'s logo by brand name or domain — returns the company\'s real mark as a hotlinkable URL (a thumbnail is included when possible so you can confirm the brand), plus open-source vector marks (SVG) for well-known brands. One company per call — for a logo wall, call once per brand. The exact domain ("acme.io") resolves far more reliably than a name ("Acme"). Use for customer-logo walls, "works with" integration rows, testimonial cards, press bars. Mind each result\'s size guidance: favicon-sourced logos are small rasters — never scale them up.',
       inputSchema: {
-        query: z.string().describe('Company name or domain'),
+        query: z.string().describe('A single company name or domain, e.g. "vercel.com"'),
         count: z.number().min(1).max(8).optional().describe('Candidates to return, default 5'),
         canvas_id: z.string().optional().describe('The canvas you are designing on (lets human feedback reach you)'),
         agent_name: agentName,
