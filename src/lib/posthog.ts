@@ -14,6 +14,9 @@
 import 'posthog-js/dist/posthog-recorder'
 import 'posthog-js/dist/exception-autocapture'
 import 'posthog-js/dist/web-vitals'
+/* Conversations (customer support widget): also a lazy-loaded extension, so
+   it must be compiled in or the no-external build can never show it. */
+import 'posthog-js/dist/conversations'
 import posthog from 'posthog-js/dist/module.no-external'
 
 const key = import.meta.env.VITE_POSTHOG_KEY
