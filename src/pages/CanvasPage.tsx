@@ -652,6 +652,7 @@ function ImportModal({
                       : '⤓ Import page'}
               </Button>
             </ModalActions>
+            <SyncKeysSection canvasId={canvasId} />
           </>
         ) : (
           <>
@@ -951,7 +952,6 @@ function ShareModal({ canvasId, onClose, onCopied }: { canvasId: string; onClose
             ⧉ Copy link
           </Button>
         </div>
-        <SyncKeysSection canvasId={canvasId} />
       </>
     </Modal>
   )
