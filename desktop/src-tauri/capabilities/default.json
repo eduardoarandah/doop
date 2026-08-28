@@ -1,0 +1,16 @@
+{
+  "$schema": "gen/schemas/desktop-schema.json",
+  "identifier": "shell",
+  "description": "Lets the hosted app use the shell's IPC: window dragging for the custom tab strip (core:default) and opening external links in the system browser (opener). Remote IPC is scoped to the production origin; self-hosters overriding DOOP_APP_URL must add their origin here. In dev the devUrl origin counts as local, so no entry is needed for it.",
+  "windows": ["main"],
+  "remote": {
+    "urls": ["https://doop.design", "https://www.doop.design"]
+  },
+  "permissions": [
+    "core:default",
+    {
+      "identifier": "opener:allow-open-url",
+      "allow": [{ "url": "https://**" }, { "url": "http://**" }]
+    }
+  ]
+}

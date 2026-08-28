@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { navigate } from '../App'
 import { api } from '../lib/api'
 import { posthog } from '../lib/posthog'
+import { openCanvasTab } from '../lib/desktop'
 import { ModelAccountPanel } from '../components/ModelAccount'
 import { useAllowance } from '../components/TeamAllowance'
 import { AccountSettings } from '../components/AccountSettings'
@@ -48,7 +49,7 @@ export function Settings() {
   async function createCanvas() {
     const canvas = await api.createCanvas('Untitled canvas')
     posthog.capture('canvas_created')
-    navigate(`/c/${canvas.id}`)
+    if (!openCanvasTab(canvas.id, canvas.name)) navigate(`/c/${canvas.id}`)
   }
 
   const meter =

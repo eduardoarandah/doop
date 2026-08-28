@@ -12,6 +12,8 @@ import { useMe } from './lib/me'
 import { adminApi } from './lib/api'
 import { Button } from './components/ui/button'
 import { AuthScreen } from './components/ui/screen'
+import { DesktopTabs, ShellDragBar } from './components/DesktopTabs'
+import { isDesktopShell, setTabsUser } from './lib/desktop'
 
 export function navigate(path: string) {
   history.pushState(null, '', path)
@@ -78,7 +80,19 @@ export function App() {
     if (session?.user?.name) setName(session.user.name)
   }, [session?.user?.name])
 
-  if (isPending) return <AuthScreen />
+  /* the desktop tab strip is per-account state: restore this user's tabs,
+     and clear the strip the moment the session goes away */
+  useEffect(() => {
+    if (!isPending) setTabsUser(session?.user?.id ?? null)
+  }, [isPending, session?.user?.id])
+
+  if (isPending)
+    return (
+      <>
+        <ShellDragBar />
+        <AuthScreen />
+      </>
+    )
   if (!session) {
     /* an interrupted MCP OAuth authorize redirect must land on the sign-in
        form (its resume logic reads these params), never the marketing page */
@@ -86,7 +100,15 @@ export function App() {
     const oauthResume = (params.has('client_id') && params.has('response_type')) || params.has('redirect_to')
     /* share-link visitors (/c/…) go straight to sign-in so the deep link
        survives — the canvas renders right after the session appears */
-    if (path.startsWith('/auth') || path.startsWith('/c/') || oauthResume) return <AuthPage />
+    /* the desktop shell never shows the marketing landing page — signing
+       out (or any signed-out path) lands on the sign-in form instead */
+    if (path.startsWith('/auth') || path.startsWith('/c/') || oauthResume || isDesktopShell())
+      return (
+        <>
+          <ShellDragBar />
+          <AuthPage />
+        </>
+      )
     return <Landing />
   }
 
@@ -117,6 +139,13 @@ export function App() {
           workspace is `fixed inset-0` and ignores this padding, so it offsets
           itself by the same variable instead of hardcoding the banner height */}
       <div className="h-dvh overflow-auto pt-14 [--app-inset:56px] sm:pt-10 sm:[--app-inset:40px]">{page}</div>
+    </>
+  ) : isDesktopShell() ? (
+    /* the desktop shell's tab strip uses the same --app-inset contract as
+       the banner: fixed screens (the canvas workspace) offset themselves */
+    <>
+      <DesktopTabs path={path} />
+      <div className="h-dvh overflow-auto pt-10 [--app-inset:40px]">{page}</div>
     </>
   ) : (
     page

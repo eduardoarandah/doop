@@ -9,6 +9,7 @@ import { timeAgo } from '../lib/time'
 import { AgentIcon } from '../components/AgentIcon'
 import { AccountMenu, ConnectCard, IconGrid, IconList, IconShare, IconUser } from '../components/DashShell'
 import { posthog } from '../lib/posthog'
+import { closeTab, openCanvasTab, pruneTabs } from '../lib/desktop'
 import { Tabs, TabsList, TabsTrigger } from '../components/ui/tabs'
 import { Button } from '../components/ui/button'
 import { Badge } from '../components/ui/badge'
@@ -55,7 +56,7 @@ export function Home() {
   const searchRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
-    api.listCanvases().then(setCanvases).catch(console.error)
+    reload()
     api.homeActivity().then(setActivity).catch(console.error)
     const start = window.setTimeout(() => setNow(Date.now()), 0)
     const tick = window.setInterval(() => setNow(Date.now()), 30_000)
@@ -83,11 +84,25 @@ export function Home() {
   async function createCanvas() {
     const canvas = await api.createCanvas('Untitled canvas')
     posthog.capture('canvas_created')
-    navigate(`/c/${canvas.id}`)
+    open(canvas.id, canvas.name)
+  }
+
+  /* Figma-style in the desktop shell: the canvas gets its own tab and Home
+     stays put. In the browser it's a plain in-page navigation. */
+  function open(id: string, title?: string) {
+    if (!openCanvasTab(id, title)) navigate(`/c/${id}`)
   }
 
   function reload() {
-    api.listCanvases().then(setCanvases).catch(console.error)
+    api
+      .listCanvases()
+      .then((list) => {
+        setCanvases(list)
+        /* every fresh list is a chance to drop tabs for canvases that are
+           gone — deleted here, in another session, or by someone else */
+        pruneTabs(new Set(list.map((c) => c.id)))
+      })
+      .catch(console.error)
   }
 
   const hour = new Date().getHours()
@@ -198,7 +213,7 @@ export function Home() {
                 <button
                   key={a.id}
                   className="flex w-full gap-[9px] rounded-[9px] border-0 bg-transparent px-2.5 py-1.5 text-left transition-colors hover:bg-paper"
-                  onClick={() => navigate(`/c/${a.canvasId}`)}
+                  onClick={() => open(a.canvasId, a.canvasName)}
                 >
                   <Dot size="sm" className="mt-[5px]" style={{ background: a.actorColor }} />
                   <span className="min-w-0 text-[12px] leading-[1.35] text-ink-soft">
@@ -337,7 +352,7 @@ export function Home() {
                       <Skeleton key={i} index={i} className={cn(cardCls, 'min-h-[230px] border-solid')} />
                     ))}
                   {visible.map((c) => (
-                    <button key={c.id} className={cn(cardCls, 'group')} onClick={() => navigate(`/c/${c.id}`)}>
+                    <button key={c.id} className={cn(cardCls, 'group')} onClick={() => open(c.id, c.name)}>
                       <div className="relative grid aspect-[16/10] place-items-center overflow-hidden border-b border-line-soft [background:radial-gradient(circle,var(--dot)_1px,transparent_1px)_0_0/18px_18px,var(--paper-deep)]">
                         <Preview canvas={c} />
                         <AgentStack canvas={c} />
@@ -358,7 +373,7 @@ export function Home() {
                     <button
                       key={c.id}
                       className="flex w-full items-center gap-2.5 border-0 border-b border-line-soft bg-transparent px-3 py-2.5 text-left transition-colors last:border-b-0 hover:bg-paper md:gap-[13px] md:px-3.5 md:py-[9px]"
-                      onClick={() => navigate(`/c/${c.id}`)}
+                      onClick={() => open(c.id, c.name)}
                     >
                       <span className="grid h-9 w-[58px] flex-none place-items-center overflow-hidden rounded-[7px] border border-line-soft bg-paper-deep">
                         <Preview canvas={c} blankSize="text-[9px]" />
@@ -392,7 +407,11 @@ export function Home() {
 function remove(id: string, done: () => void) {
   api
     .deleteCanvas(id)
-    .then(() => posthog.capture('canvas_deleted'))
+    .then(() => {
+      posthog.capture('canvas_deleted')
+      /* a deleted canvas has no tab to come back to (desktop shell) */
+      closeTab(id, location.pathname)
+    })
     .catch(console.error)
     .finally(done)
 }

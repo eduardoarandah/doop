@@ -4,6 +4,7 @@ import { connect, disconnect, sendWs } from '../lib/ws'
 import { api, ApiError, type CanvasMember, type DiscoveredSite, type SyncKeyInfo } from '../lib/api'
 import { navigate } from '../App'
 import { Logo } from '../components/Logo'
+import { ensureTab } from '../lib/desktop'
 import { Stage } from '../components/Stage'
 import { Board } from '../components/Board'
 import { Inspector } from '../components/Inspector'
@@ -77,6 +78,14 @@ export function CanvasPage({ canvasId }: { canvasId: string }) {
   const [toast, setToast] = useState<string | null>(null)
   const updateReady = useStore((s) => s.updateReady)
   const limitWall = useStore((s) => s.limitWall)
+
+  /* keep the desktop shell's tab label in step with the live canvas name.
+     The store's canvas briefly lags a navigation (the previous page's data
+     until this one's ws init lands), so only sync when it's really ours —
+     otherwise closing a tab re-adds it from its own stale state. */
+  useEffect(() => {
+    if (canvas?.id === canvasId) ensureTab(canvas.id, canvas.name)
+  }, [canvas, canvasId])
 
   useEffect(() => {
     connect(canvasId)
