@@ -15,9 +15,13 @@ import type { AccountKind } from './modelAccounts.ts'
  * on your ChatGPT subscription or OpenAI key. Both take effect immediately —
  * a connected user is never metered again, and their remaining free tasks
  * simply stop being relevant.
+ *
+ * The default is 0: the Doop Agent runs on an account the user connects, from
+ * the first task. Self-hosters footing their own model bill can grant an
+ * allowance via RESIDENT_TASK_LIMIT.
  */
 
-export const RESIDENT_TASK_LIMIT = Math.max(0, Number(process.env.RESIDENT_TASK_LIMIT ?? 5))
+export const RESIDENT_TASK_LIMIT = Math.max(0, Number(process.env.RESIDENT_TASK_LIMIT ?? 0))
 
 export interface Allowance {
   used: number

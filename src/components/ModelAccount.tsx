@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { api } from '../lib/api'
 import type { DeviceFlow, ModelAccountStatus } from '../lib/api'
 import { posthog } from '../lib/posthog'
+import { useStore } from '../lib/store'
 import { CodeBlock } from './ui/code-block'
 import { Button } from './ui/button'
 import { Input } from './ui/input'
@@ -127,6 +128,8 @@ export function ModelAccountPanel({ onChange }: { onChange?: () => void }) {
       setApiKey('')
       setError('')
       onChange?.()
+      /* every allowance meter and wall on screen re-reads, not just this pane */
+      useStore.getState().allowanceChanged()
     },
     [set, onChange],
   )

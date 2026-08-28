@@ -46,7 +46,15 @@ export function MeterLine({ allowance }: { allowance: Allowance | null }) {
       </span>
     )
   }
-  if (allowance.limit <= 0) return null
+  /* no free tier on this server: say what connecting gets them instead of
+     counting tasks that don't exist */
+  if (allowance.limit <= 0) {
+    return (
+      <span className="text-[12px] text-ink-faint">
+        The Doop Agent runs on your ChatGPT subscription — connect it in Settings
+      </span>
+    )
+  }
   const left = Math.max(0, allowance.limit - allowance.used)
   return (
     <span className={cn('text-[12px]', left === 0 ? 'text-accent-ink' : 'text-ink-faint')}>
@@ -59,16 +67,32 @@ export function MeterLine({ allowance }: { allowance: Allowance | null }) {
 
 export function LimitWall({ canvasId, onClose }: { canvasId: string; onClose: () => void }) {
   const [showMcp, setShowMcp] = useState(false)
+  const { allowance } = useAllowance()
+  /* "used up" only fits a server that granted free tasks in the first place;
+     everywhere else (the default, limit 0) this wall IS the getting-started
+     step — while the allowance loads, assume the no-free-tier common case */
+  const hadFreeTier = allowance != null && allowance.limit > 0
   useEffect(() => {
     posthog.capture('resident_limit_hit')
   }, [])
   return (
     <Modal size="lg" onClose={onClose}>
       <>
-        <ModalTitle>Your free Doop Agent tasks are used up</ModalTitle>
+        <ModalTitle>
+          {hadFreeTier ? 'Your free Doop Agent tasks are used up' : 'The Doop Agent runs on your ChatGPT subscription'}
+        </ModalTitle>
         <ModalLede>
-          Those were on the house. Connect your <b>ChatGPT subscription</b> and the Doop Agent keeps working exactly as
-          it does now — same canvas, same agent, running on your plan instead of ours.
+          {hadFreeTier ? (
+            <>
+              Those were on the house. Connect your <b>ChatGPT subscription</b> and the Doop Agent keeps working exactly
+              as it does now — same canvas, same agent, running on your plan instead of ours.
+            </>
+          ) : (
+            <>
+              Connect your <b>ChatGPT subscription</b> and the Doop Agent designs on your canvases — your plan, no
+              separate bill, nothing metered.
+            </>
+          )}
         </ModalLede>
         {/* the connection itself is an account setting, so this hands off to
             Settings rather than carrying a second copy of the panel */}
