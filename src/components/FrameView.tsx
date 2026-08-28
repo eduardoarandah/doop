@@ -19,6 +19,8 @@ import { cn } from '@/lib/utils'
 import { Button } from './ui/button'
 import { Textarea } from './ui/textarea'
 import { Tooltip } from './ui/tooltip'
+import { SyncIcon } from './ui/icons'
+import { isSyncedFrame } from '../lib/sync'
 
 /* Counter-scale contract: chrome that keeps constant on-screen size divides
    by the `--zoom` variable the Stage publishes (capped at 2.4× when zoomed
@@ -407,6 +409,13 @@ export const FrameView = memo(function FrameView({ frame, raster }: { frame: Fra
             )}
             onPointerDown={(e) => startDrag(e, 'move', false, true)}
           >
+            {isSyncedFrame(frame.html) && (
+              <Tooltip label="Synced from a live app" side="top" align="start">
+                <span className="flex shrink-0 items-center text-brand">
+                  <SyncIcon width={11} height={11} />
+                </span>
+              </Tooltip>
+            )}
             <span className="overflow-hidden text-ellipsis">{frame.name}</span>
             <span className="flex gap-1">
               {stream && (

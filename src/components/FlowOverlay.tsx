@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useStore } from '../lib/store'
 import { api, type SyncFlow } from '../lib/api'
+import { isSyncedFrame } from '../lib/sync'
 
 /**
  * The information architecture of a synced app, drawn on the canvas: when a
@@ -10,8 +11,6 @@ import { api, type SyncFlow } from '../lib/api'
  * turn a synced canvas into spaghetti. Purely presentational overlay in world
  * coordinates; pointer events pass through.
  */
-
-const SYNC_MARKER = 'name="doop-sync-page"'
 
 interface Connector {
   /** hotspot outline on the source frame, world coords */
@@ -30,7 +29,7 @@ export function FlowOverlay() {
   const [flow, setFlow] = useState<SyncFlow | null>(null)
 
   const selected = canvas?.frames.find((f) => f.id === selectedId)
-  const selectedIsSynced = !!selected && selected.html.includes(SYNC_MARKER)
+  const selectedIsSynced = !!selected && isSyncedFrame(selected.html)
 
   /* fetch lazily, on the first selection of a synced frame (and refresh on
      later selections — sync updates land while the canvas is open) */
