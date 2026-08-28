@@ -10,6 +10,8 @@ import { setName } from './lib/identity'
 import { posthog, syncReplayForUser, suspendAnalyticsWhileImpersonating } from './lib/posthog'
 import { useMe } from './lib/me'
 import { adminApi } from './lib/api'
+import { Button } from './components/ui/button'
+import { AuthScreen } from './components/ui/screen'
 
 export function navigate(path: string) {
   history.pushState(null, '', path)
@@ -76,7 +78,7 @@ export function App() {
     if (session?.user?.name) setName(session.user.name)
   }, [session?.user?.name])
 
-  if (isPending) return <div className="auth-page" />
+  if (isPending) return <AuthScreen />
   if (!session) {
     /* an interrupted MCP OAuth authorize redirect must land on the sign-in
        form (its resume logic reads these params), never the marketing page */
@@ -111,7 +113,10 @@ export function App() {
   return me?.impersonating ? (
     <>
       <ImpersonationBanner name={session.user.name} />
-      <div className="impersonating-shell">{page}</div>
+      {/* --app-inset is the contract with fixed-position screens: the canvas
+          workspace is `fixed inset-0` and ignores this padding, so it offsets
+          itself by the same variable instead of hardcoding the banner height */}
+      <div className="h-dvh overflow-auto pt-14 [--app-inset:56px] sm:pt-10 sm:[--app-inset:40px]">{page}</div>
     </>
   ) : (
     page
@@ -121,12 +126,13 @@ export function App() {
 function ImpersonationBanner({ name }: { name: string }) {
   const [leaving, setLeaving] = useState(false)
   return (
-    <div className="impersonation-banner">
+    <div className="fixed inset-x-0 top-0 z-[900] flex min-h-14 items-center justify-between gap-2 border-b border-brand px-2.5 py-[7px] text-[11.5px] leading-tight text-accent-ink backdrop-blur-[6px] [background:repeating-linear-gradient(-45deg,rgba(229,83,60,0.16)_0_10px,rgba(229,83,60,0.08)_10px_20px)] sm:h-10 sm:min-h-0 sm:justify-center sm:gap-4 sm:text-[13px]">
       <span>
         Viewing as <strong>{name}</strong> — read only, expires after 15 minutes.
       </span>
-      <button
-        className="btn ghost small"
+      <Button
+        variant="ghost"
+        size="sm"
         disabled={leaving}
         onClick={() => {
           setLeaving(true)
@@ -139,29 +145,7 @@ function ImpersonationBanner({ name }: { name: string }) {
         }}
       >
         {leaving ? 'Leaving…' : 'Stop viewing'}
-      </button>
+      </Button>
     </div>
-  )
-}
-
-/** The layered D: two stacked frames — the human's layer over the agent's —
- *  forming Doop's initial. (From the founder's sketch, identity round 7.) */
-export function Logo({ className = 'logo' }: { className?: string }) {
-  return (
-    <svg className={className} viewBox="0 0 100 100" aria-hidden>
-      <rect width="100" height="100" rx="20" fill="#1C1A15" />
-      <path
-        d="M37 31 H63 A10 10 0 0 1 73 41 V63 A10 10 0 0 1 63 73 H37 Z"
-        fill="none"
-        stroke="#E5533C"
-        strokeWidth="6"
-      />
-      <path
-        d="M28 22 H54 A10 10 0 0 1 64 32 V54 A10 10 0 0 1 54 64 H28 Z"
-        fill="none"
-        stroke="#F2EFE6"
-        strokeWidth="6"
-      />
-    </svg>
   )
 }

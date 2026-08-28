@@ -4,6 +4,9 @@ import { api } from '../lib/api'
 import { posthog } from '../lib/posthog'
 import { uploadImageFrames } from '../lib/frameClipboard'
 import { MeterLine, isResidentLimit, useAllowance } from './TeamAllowance'
+import { Button } from './ui/button'
+import { Input } from './ui/input'
+import { Note } from './ui/note'
 
 /**
  * The canvas's front door to the resident team: a prompt bar that queues a
@@ -148,13 +151,15 @@ export function PromptBar({ canvasId }: { canvasId: string }) {
   }
 
   return (
-    <div className="prompt-bar">
+    <div className="absolute bottom-[68px] left-1/2 z-30 flex w-[min(560px,calc(100vw-32px))] -translate-x-1/2 flex-col gap-2 max-md:bottom-[calc(76px+env(safe-area-inset-bottom))] max-md:w-[calc(100vw-16px)] max-md:gap-1.5">
       {fresh && !sent && (
-        <div className="pb-chips">
+        <div className="flex flex-wrap justify-center gap-1.5 max-md:flex-nowrap max-md:justify-start max-md:overflow-x-auto max-md:snap-x max-md:snap-proximity max-md:p-0.5 max-md:[scrollbar-width:none] max-md:[&::-webkit-scrollbar]:hidden">
           {SUGGESTIONS.map((s) => (
-            <button
+            <Button
               key={s}
-              className="pb-chip"
+              variant="ghost"
+              size="sm"
+              className="max-w-[calc(100vw-48px)] flex-none snap-center overflow-hidden text-ellipsis whitespace-nowrap rounded-full px-3 py-1.5 text-[12.5px] text-ink-soft shadow-card hover:border-ink-soft hover:text-ink sm:max-w-none"
               disabled={busy}
               onClick={() => {
                 /* prefill only — the prompt stays theirs to edit and send */
@@ -163,30 +168,33 @@ export function PromptBar({ canvasId }: { canvasId: string }) {
               }}
             >
               ✦ {s}
-            </button>
+            </Button>
           ))}
         </div>
       )}
       {attachments.length > 0 && (
-        <div className="pb-thumbs">
+        <div className="flex gap-2 px-0.5">
           {attachments.map((a) => (
-            <div key={a.preview} className="pb-thumb">
-              <img src={a.preview} alt={a.file.name} />
-              <button
-                type="button"
-                className="pb-thumb-x"
+            <div
+              key={a.preview}
+              className="relative h-[52px] w-[52px] overflow-hidden rounded-[8px] border border-line bg-surface shadow-card"
+            >
+              <img src={a.preview} alt={a.file.name} className="block h-full w-full object-cover" />
+              <Button
+                variant="bare"
+                className="absolute right-0.5 top-0.5 size-4 justify-center rounded-full bg-black/55 p-0 text-xs leading-none text-white hover:bg-black/70 hover:text-white"
                 aria-label={`Remove ${a.file.name}`}
                 disabled={busy}
                 onClick={() => removeAttachment(a.preview)}
               >
                 ×
-              </button>
+              </Button>
             </div>
           ))}
         </div>
       )}
       <form
-        className="pb-row"
+        className="flex items-center gap-2 rounded-[12px] border border-line bg-surface p-1.5 shadow-pop max-md:gap-[3px] max-md:p-[5px]"
         onSubmit={(e) => {
           e.preventDefault()
           submit(text)
@@ -203,9 +211,9 @@ export function PromptBar({ canvasId }: { canvasId: string }) {
             e.target.value = '' // same file can be re-picked after removal
           }}
         />
-        <button
-          type="button"
-          className="pb-attach"
+        <Button
+          variant="bare"
+          className="ml-0 size-10 justify-center p-2 text-ink-faint hover:bg-paper hover:text-ink-soft sm:ml-0.5 sm:size-auto sm:p-1.5"
           aria-label="Attach images"
           title="Attach screenshots or images"
           disabled={busy}
@@ -224,10 +232,12 @@ export function PromptBar({ canvasId }: { canvasId: string }) {
           >
             <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" />
           </svg>
-        </button>
-        <input
+        </Button>
+        <Input
           ref={inputRef}
-          className="pb-input"
+          variant="bare"
+          inputSize="auto"
+          className="flex-1 px-1 py-1.5 md:px-2 md:text-sm"
           value={text}
           disabled={busy}
           placeholder="Ask the Doop Agent to design something…"
@@ -240,15 +250,24 @@ export function PromptBar({ canvasId }: { canvasId: string }) {
             }
           }}
         />
-        <button className="pb-send" type="submit" disabled={busy || !text.trim()}>
+        <Button
+          variant="primary"
+          className="min-h-10 flex-none rounded-lg border-transparent px-2.5 py-2 shadow-none hover:translate-x-0 hover:translate-y-0 hover:shadow-none sm:min-h-0 sm:px-3.5 sm:py-[7px]"
+          type="submit"
+          disabled={busy || !text.trim()}
+        >
           {busy ? '…' : 'Design it'}
-        </button>
+        </Button>
       </form>
-      <div className="pb-meta">
+      <div className="flex min-h-4 justify-center">
         {error ? (
-          <span className="pb-error">{error}</span>
+          <Note tone="error" size="sm" className="text-xs">
+            {error}
+          </Note>
         ) : sent ? (
-          <span className="pb-sent">✦ The Doop Agent is on it — watch the canvas</span>
+          <Note size="sm" className="text-xs text-ink-soft">
+            ✦ The Doop Agent is on it — watch the canvas
+          </Note>
         ) : (
           <MeterLine allowance={allowance} />
         )}

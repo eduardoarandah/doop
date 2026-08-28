@@ -41,7 +41,7 @@ interface State {
   selectedId: string | null
   /** open frame context menu; deferPanel hides the Inspector until it closes
    *  (right-click selecting a frame must not slide a panel in under the menu) */
-  ctxMenu: { frameId: string; x: number; y: number; deferPanel: boolean } | null
+  ctxMenu: { frameId: string; deferPanel: boolean } | null
   viewport: Viewport
   /** live alignment guide lines while a frame drag is snapped to a neighbour */
   snapGuides: SnapGuide[]
@@ -96,7 +96,7 @@ interface State {
   allowanceChanged(): void
   requestFlyTo(frameId: string): void
   select(id: string | null): void
-  openCtxMenu(menu: { frameId: string; x: number; y: number; deferPanel: boolean }): void
+  openCtxMenu(menu: { frameId: string; deferPanel: boolean }): void
   closeCtxMenu(): void
   setViewport(v: Viewport): void
   setSnapGuides(guides: SnapGuide[]): void

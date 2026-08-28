@@ -24,10 +24,10 @@ Common types: `feat`, `fix`, `chore`, `refactor`, `style`, `docs`, `test`, `ci`,
 
 ## Code style
 
-- **Prettier** formats everything (`npm run format`); no semicolons, single quotes, 120 columns.
-- **ESLint** (`npm run lint`) covers TS + React hooks. Warnings are tolerated tech debt; errors block.
-- **`npm run typecheck`** must pass.
+- **Prettier** formats everything (`bun run format`); no semicolons, single quotes, 120 columns.
+- **ESLint** (`bun run lint`) covers TS + React hooks. Warnings are tolerated tech debt; errors block.
+- **`bun run typecheck`** must pass.
 
-A pre-commit hook (husky + lint-staged) runs ESLint and Prettier on staged files, and a commit-msg hook validates the message. Hooks install automatically via `npm install` (the `prepare` script).
+A pre-commit hook (husky + lint-staged) runs ESLint and Prettier on staged files, and a commit-msg hook validates the message. Hooks install automatically via `bun install` (the `prepare` script).
 
 CI runs typecheck, lint, format check, and build on every push and PR.

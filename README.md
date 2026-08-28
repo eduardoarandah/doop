@@ -32,16 +32,19 @@ activity feed.
   style rules that every agent follows.
 - **Private by default** — invite collaborators by email or flip on link sharing per canvas;
   agents inherit exactly their human's access.
-- **Self-host in one command** — `docker compose up`, or `npm run dev` with zero configuration
+- **Self-host in one command** — `docker compose up`, or `bun run dev` with zero configuration
   (embedded Postgres, no external services required).
 
 ## Quickstart
 
 ```bash
 git clone https://github.com/kgoedecke/doop && cd doop
-npm install
-npm run dev
+bun install
+bun run dev
 ```
+
+Doop builds and installs with [bun](https://bun.sh) (`bun.lock` is the only
+lockfile); the server itself runs on Node.
 
 - Web app: **http://localhost:4300**
 - API + WebSocket + MCP server: **http://localhost:4400** (the web port proxies `/api`, `/ws`, `/mcp` to it)
@@ -58,7 +61,7 @@ Or self-host the production build with Docker:
 BETTER_AUTH_SECRET=$(openssl rand -hex 32) docker compose up -d   # app + Postgres on :4400
 ```
 
-Production build without Docker: `npm run build && npm start` (single server on :4400 serving
+Production build without Docker: `bun run build && bun run start` (single server on :4400 serving
 everything). Set `DATABASE_URL` to use a real Postgres — same code path as PGlite.
 
 Prefer not to run anything? **[doop.design](https://doop.design)** is the hosted version.
@@ -455,7 +458,23 @@ server/          Node (tsx) — one process on :4400
   seed.ts        Demo canvas on first run
 shared/types.ts  Store + ws protocol types shared by server and client
 src/             React + Vite + zustand client on :4300
+  components/ui/ The component system — every styled primitive lives here
+  styles.css     Design tokens, the base reset, and keyframes. Nothing else.
 ```
+
+### Styling
+
+Doop's look is a component system, not a stylesheet. `src/components/ui/` holds the
+primitives — `Button`, `Input`, `Badge`, `Card`, `Panel`, `Modal`, `Menu`, `Toolbar`,
+`Segmented`, `Dash*` and the rest — each a Tailwind + [CVA](https://cva.style) recipe bound
+to the tokens in `styles.css`. Screens compose those; they don't re-describe borders,
+shadows or type scales. If a pattern shows up twice, it belongs in `ui/`.
+
+`src/styles.css` is deliberately small: the `:root` tokens (`--ink`, `--paper`, `--brand`…),
+their `@theme inline` mapping onto Tailwind names, the base reset, and the `@keyframes`
+utilities cannot express. Components reference those animations by name, so the names are
+API. `--breakpoint-md` (900px) is the mobile boundary and `useIsMobile()` matches it in JS —
+change them together.
 
 Frame HTML renders in `<iframe sandbox="allow-scripts">` — scripts run, but no same-origin access and
 no reach into the app. Each iframe loads a small bootstrap once; new HTML is `postMessage`d in and
@@ -468,7 +487,7 @@ through identical plumbing.
 ## Contributing
 
 PRs welcome — see [CONTRIBUTING.md](CONTRIBUTING.md) for commit conventions and code style.
-`npm test` runs the integration suite (it boots the real server against a throwaway database);
+`bun run test` runs the integration suite (it boots the real server against a throwaway database);
 schema changes go through drizzle migrations (`npx drizzle-kit generate` after editing
 `server/db/schema.ts`). Security issues: see [SECURITY.md](SECURITY.md) — please report privately.
 

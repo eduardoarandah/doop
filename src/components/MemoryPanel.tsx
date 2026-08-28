@@ -3,9 +3,22 @@ import type { GuidelineDoc, MemoryReference } from '../../shared/types'
 import { useStore } from '../lib/store'
 import { api } from '../lib/api'
 import { timeAgo } from '../lib/time'
+import { Button } from './ui/button'
+import { Badge } from './ui/badge'
+import { Input } from './ui/input'
+import { Textarea } from './ui/textarea'
+import { PanelBody } from './ui/panel'
+import { ListHint, ListItem, ListMeta, ListRow, ListSection, ListSummary, ListTitle } from './ui/list'
+import { MarkdownBlock, Modal, ModalActions, ModalLede, ModalSpacer, ModalTitle } from './ui/modal'
+import { ConfirmDialog } from './ui/alert-dialog'
 
 const MAX_GUIDELINE_CHARS = 24_000
 const MAX_TITLE_CHARS = 80
+
+/* Timestamp/author line under a modal heading. */
+const meta = 'mt-1.5 text-[11.5px] text-ink-faint'
+const errorText = 'mt-2.5 text-[13px] text-accent-ink'
+const modalHead = 'flex flex-wrap items-baseline gap-2.5'
 
 /** Pretty display name: explicit title, else the prettified slug. */
 function guideTitle(doc: Pick<GuidelineDoc, 'name' | 'title'>): string {
@@ -47,21 +60,21 @@ export function MemoryPanel() {
   const empty = docs.length === 0 && references.length === 0 && decisions.length === 0 && pending.length === 0
 
   return (
-    <div className="activity-list memory-panel">
+    <PanelBody className="flex flex-col py-2">
       {empty && (
-        <div className="mp-tutorial">
-          <p className="mp-tutorial-lede">
+        <div className="border-b border-line-soft px-4 py-3.5">
+          <p className="text-[12.5px] leading-[1.5] font-semibold text-ink">
             Memory is how this canvas remembers your taste — and how every agent designs with it.
           </p>
-          <ul>
-            <li>
+          <ul className="mt-2.5 flex flex-col gap-2 pl-4">
+            <li className="text-[12px] leading-[1.5] text-ink-soft">
               <b>References</b> — pin a frame you love (the 🧠 on its corner). Agents copy its colors, type and layout
               when they design something new.
             </li>
-            <li>
+            <li className="text-[12px] leading-[1.5] text-ink-soft">
               <b>Rules</b> — style guides agents read before designing. Write them, or let them grow.
             </li>
-            <li>
+            <li className="text-[12px] leading-[1.5] text-ink-soft">
               <b>Decisions</b> — feedback you give agents is captured here automatically once it’s addressed. When a
               preference keeps recurring, Doop suggests adding it to your rules.
             </li>
@@ -70,81 +83,94 @@ export function MemoryPanel() {
       )}
 
       {pending.map((p) => (
-        <div key={p.id} className="mp-proposal">
-          <div className="mp-proposal-tag">✦ Memory suggestion</div>
-          <div className="mp-proposal-rule">{p.rule.replace(/^-\s*/, '')}</div>
-          <div className="mp-proposal-meta">
+        <div
+          key={p.id}
+          className="mx-4 mt-3 rounded-[12px] border border-brand bg-white px-3.5 py-3 shadow-[2px_2px_0_var(--accent-ink)]"
+        >
+          <div className="text-[10.5px] font-extrabold uppercase tracking-[0.08em] text-accent-ink">
+            ✦ Memory suggestion
+          </div>
+          <div className="mt-1.5 text-[13px] font-semibold leading-[1.45] text-ink">{p.rule.replace(/^-\s*/, '')}</div>
+          <div className="mt-1.5 text-[11.5px] leading-[1.45] text-ink-faint">
             {p.rationale} · from {p.basedOn.length} decision{p.basedOn.length === 1 ? '' : 's'} → “
             {p.guideTitle ?? guideTitle({ name: p.guideName })}”
           </div>
-          <div className="mp-proposal-actions">
-            <button
-              className="btn ghost"
+          <div className="mt-2.5 flex justify-end gap-2">
+            <Button
+              variant="ghost"
+              size="sm"
+              className="text-[11.5px]"
               onClick={() => api.resolveProposal(canvasId, p.id, false).catch(console.error)}
             >
               Dismiss
-            </button>
-            <button
-              className="btn primary"
+            </Button>
+            <Button
+              variant="primary"
+              size="sm"
+              className="text-[11.5px]"
               onClick={() => api.resolveProposal(canvasId, p.id, true).catch(console.error)}
             >
               Add to rules
-            </button>
+            </Button>
           </div>
         </div>
       ))}
 
-      <div className="mp-section">
+      <ListSection>
         <span>References</span>
-      </div>
+      </ListSection>
       {references.length === 0 ? (
-        <div className="mp-hint">
+        <ListHint>
           No references yet. Pin a frame you like (the 🧠 on its corner) and agents will copy its colors, type and
           layout in new designs.
-        </div>
+        </ListHint>
       ) : (
         references.map((r) => (
-          <button key={r.id} className="mp-ref" onClick={() => setOpenRef(r.id)}>
+          <ListRow key={r.id} className="gap-1 py-2.5" onClick={() => setOpenRef(r.id)}>
             <RefThumb reference={r} />
-            <span className="mp-ref-title">{r.title}</span>
-            <span className="gp-item-meta">
+            <ListTitle>{r.title}</ListTitle>
+            <ListMeta>
               {r.pinnedBy} · {timeAgo(r.pinnedAt)}
-            </span>
-          </button>
+            </ListMeta>
+          </ListRow>
         ))
       )}
 
-      <div className="mp-section">
+      <ListSection>
         <span>Rules</span>
-        <button className="gp-new" onClick={() => setOpenGuide('')}>
+        <Button
+          size="sm"
+          className="flex-none border-ink bg-ink text-[11.5px] font-bold text-white shadow-none hover:translate-x-0 hover:translate-y-0 hover:shadow-none"
+          onClick={() => setOpenGuide('')}
+        >
           + New
-        </button>
-      </div>
-      {docs.length === 0 && <div className="mp-hint">Style guides every agent reads before designing here.</div>}
+        </Button>
+      </ListSection>
+      {docs.length === 0 && <ListHint>Style guides every agent reads before designing here.</ListHint>}
       {docs.map((d) => (
-        <button key={d.name} className="gp-item" onClick={() => setOpenGuide(d.name)}>
-          <span className="gp-item-title">{guideTitle(d)}</span>
-          <span className="gp-item-summary">{summarize(d.markdown)}</span>
-          <span className="gp-item-meta">
+        <ListRow key={d.name} onClick={() => setOpenGuide(d.name)}>
+          <ListTitle>{guideTitle(d)}</ListTitle>
+          <ListSummary>{summarize(d.markdown)}</ListSummary>
+          <ListMeta>
             {d.updatedBy} · {timeAgo(d.updatedAt)}
-          </span>
-        </button>
+          </ListMeta>
+        </ListRow>
       ))}
 
       {decisions.length > 0 && (
         <>
-          <div className="mp-section">
+          <ListSection>
             <span>Decisions</span>
-          </div>
+          </ListSection>
           {decisions.slice(0, 20).map((d) => (
-            <div key={d.id} className="mp-decision" title={d.summary ? `${d.from}: “${d.text}”` : undefined}>
-              <span className="mp-decision-text">{d.summary ?? `“${d.text}”`}</span>
-              <span className="gp-item-meta">
+            <ListItem key={d.id} title={d.summary ? `${d.from}: “${d.text}”` : undefined}>
+              <span className="text-[12.5px] leading-[1.45] text-ink">{d.summary ?? `“${d.text}”`}</span>
+              <ListMeta>
                 {d.from}
                 {d.agentName ? ` → ${d.agentName}` : ''} · {timeAgo(d.at)}
                 {d.distilledAt ? ' · distilled' : ''}
-              </span>
-            </div>
+              </ListMeta>
+            </ListItem>
           ))}
         </>
       )}
@@ -159,7 +185,7 @@ export function MemoryPanel() {
           onClose={() => setOpenRef(null)}
         />
       )}
-    </div>
+    </PanelBody>
   )
 }
 
@@ -168,8 +194,12 @@ function RefThumb({ reference }: { reference: MemoryReference }) {
   const w = 264 // panel content width
   const scale = w / reference.width
   return (
-    <span className="mp-ref-thumb" style={{ height: Math.min(reference.height * scale, 150) }}>
+    <span
+      className="block w-full overflow-hidden rounded-[8px] border border-line bg-white"
+      style={{ height: Math.min(reference.height * scale, 150) }}
+    >
       <iframe
+        className="pointer-events-none origin-top-left border-0"
         title={reference.title}
         srcDoc={reference.html}
         sandbox=""
@@ -192,38 +222,38 @@ function RefModal({
 }) {
   if (!reference) {
     return (
-      <div className="modal-backdrop" onClick={onClose}>
-        <div className="modal guide-modal" onClick={(e) => e.stopPropagation()}>
-          <p className="lede">This reference is no longer pinned.</p>
-          <div className="close-row">
-            <button className="btn ghost" onClick={onClose}>
-              Close
-            </button>
-          </div>
-        </div>
-      </div>
+      <Modal size="xl" onClose={onClose}>
+        <ModalTitle className="sr-only">Reference</ModalTitle>
+        <ModalLede>This reference is no longer pinned.</ModalLede>
+        <ModalActions>
+          <Button variant="ghost" onClick={onClose}>
+            Close
+          </Button>
+        </ModalActions>
+      </Modal>
     )
   }
   const w = Math.min(696, window.innerWidth - 110)
   const scale = Math.min(1, w / reference.width)
   return (
-    <div className="modal-backdrop" onClick={onClose}>
-      <div className="modal guide-modal" onClick={(e) => e.stopPropagation()}>
-        <div className="gm-head">
-          <h2>{reference.title}</h2>
-          <span className="gp-slug">
+    <Modal size="xl" onClose={onClose}>
+      <>
+        <div className={modalHead}>
+          <ModalTitle>{reference.title}</ModalTitle>
+          <Badge tone="outline" className="rounded-full px-2 py-px">
             {Math.round(reference.width)}×{Math.round(reference.height)}
-          </span>
+          </Badge>
         </div>
-        <div className="gp-meta">
+        <div className={meta}>
           pinned by {reference.pinnedBy} · {new Date(reference.pinnedAt).toLocaleString()} — agents copy this design’s
           colors, type and layout in new work
         </div>
         <div
-          className="mp-ref-preview"
+          className="mt-3.5 overflow-auto rounded-[12px] border border-line bg-white"
           style={{ height: Math.min(reference.height * scale, window.innerHeight * 0.55) }}
         >
           <iframe
+            className="pointer-events-none origin-top-left border-0"
             title={reference.title}
             srcDoc={reference.html}
             sandbox=""
@@ -231,23 +261,23 @@ function RefModal({
             style={{ width: reference.width, height: reference.height, transform: `scale(${scale})` }}
           />
         </div>
-        <div className="close-row">
-          <button
-            className="btn ghost"
+        <ModalActions>
+          <Button
+            variant="ghost"
             onClick={() => {
               api.unpinReference(canvasId, reference.id).catch(console.error)
               onClose()
             }}
           >
             Unpin
-          </button>
-          <span className="gm-spacer" />
-          <button className="btn ghost" onClick={onClose}>
+          </Button>
+          <ModalSpacer />
+          <Button variant="ghost" onClick={onClose}>
             Close
-          </button>
-        </div>
-      </div>
-    </div>
+          </Button>
+        </ModalActions>
+      </>
+    </Modal>
   )
 }
 
@@ -263,6 +293,7 @@ function GuideModal({ canvasId, name, onClose }: { canvasId: string; name: strin
   const [draft, setDraft] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [confirmDelete, setConfirmDelete] = useState(false)
 
   async function save(slug: string, markdown: string, title?: string) {
     if (busy) return
@@ -282,12 +313,14 @@ function GuideModal({ canvasId, name, onClose }: { canvasId: string; name: strin
   const editing = creating || mode === 'edit'
 
   return (
-    <div className="modal-backdrop" onClick={() => !busy && onClose()}>
-      <div className="modal guide-modal" onClick={(e) => e.stopPropagation()}>
+    <Modal size="xl" onClose={() => !busy && onClose()}>
+      <>
         {editing ? (
           <>
-            <input
-              className="gm-title-input"
+            <ModalTitle className="sr-only">{creating ? 'New rule' : 'Edit rule'}</ModalTitle>
+            <Input
+              inputSize="lg"
+              className="rounded-[10px] bg-paper font-display font-extrabold focus:ring-0 md:text-[19px]"
               autoFocus={creating}
               placeholder="Name, e.g. “Featured Images”"
               value={titleDraft}
@@ -295,9 +328,9 @@ function GuideModal({ canvasId, name, onClose }: { canvasId: string; name: strin
               disabled={busy}
               onChange={(e) => setTitleDraft(e.target.value)}
             />
-            <div className="gp-meta">id: {creating ? slugify(titleDraft) || '…' : doc?.name}</div>
-            <textarea
-              className="gm-editor"
+            <div className={meta}>id: {creating ? slugify(titleDraft) || '…' : doc?.name}</div>
+            <Textarea
+              className="mt-3 min-h-[38dvh] resize-y rounded-[12px] bg-white px-4 py-3.5 font-mono leading-[1.65] focus:ring-0 sm:min-h-[46vh] md:text-[12.5px]"
               autoFocus={!creating}
               placeholder={'# Rules\n\nPalette, fonts, layout recipes, asset URLs…'}
               value={draft}
@@ -305,17 +338,17 @@ function GuideModal({ canvasId, name, onClose }: { canvasId: string; name: strin
               disabled={busy}
               onChange={(e) => setDraft(e.target.value)}
             />
-            {error && <p className="import-error">{error}</p>}
-            <div className="close-row">
-              <span className="gp-meta">
+            {error && <p className={errorText}>{error}</p>}
+            <ModalActions className="items-center">
+              <span className={meta}>
                 {draft.length.toLocaleString()} / {MAX_GUIDELINE_CHARS.toLocaleString()}
               </span>
-              <span className="gm-spacer" />
-              <button className="btn ghost" disabled={busy} onClick={() => (creating ? onClose() : setMode('read'))}>
+              <ModalSpacer />
+              <Button variant="ghost" disabled={busy} onClick={() => (creating ? onClose() : setMode('read'))}>
                 Cancel
-              </button>
-              <button
-                className="btn primary"
+              </Button>
+              <Button
+                variant="primary"
                 disabled={busy || !draft.trim() || (creating && !slugify(titleDraft))}
                 onClick={() =>
                   creating
@@ -324,18 +357,19 @@ function GuideModal({ canvasId, name, onClose }: { canvasId: string; name: strin
                 }
               >
                 {busy ? 'Saving…' : 'Save'}
-              </button>
-            </div>
+              </Button>
+            </ModalActions>
           </>
         ) : !doc ? (
           /* deleted while open (possibly by someone else) */
           <>
-            <p className="lede">This design guide no longer exists.</p>
-            <div className="close-row">
-              <button className="btn ghost" onClick={onClose}>
+            <ModalTitle className="sr-only">Rule</ModalTitle>
+            <ModalLede>This design guide no longer exists.</ModalLede>
+            <ModalActions>
+              <Button variant="ghost" onClick={onClose}>
                 Close
-              </button>
-            </div>
+              </Button>
+            </ModalActions>
           </>
         ) : mode === 'history' ? (
           <GuideHistory
@@ -347,34 +381,39 @@ function GuideModal({ canvasId, name, onClose }: { canvasId: string; name: strin
           />
         ) : (
           <>
-            <div className="gm-head">
-              <h2>{guideTitle(doc)}</h2>
-              <span className="gp-slug">{doc.name}</span>
+            <div className={modalHead}>
+              <ModalTitle>{guideTitle(doc)}</ModalTitle>
+              <Badge tone="outline" className="rounded-full px-2 py-px">
+                {doc.name}
+              </Badge>
             </div>
-            <div className="gp-meta">
+            <div className={meta}>
               edited by {doc.updatedBy} · {new Date(doc.updatedAt).toLocaleString()}
             </div>
-            <pre className="gm-markdown">{doc.markdown}</pre>
-            {error && <p className="import-error">{error}</p>}
-            <div className="close-row">
-              <button
-                className="btn ghost"
-                disabled={busy}
-                onClick={() => {
-                  if (window.confirm(`Delete the design guide “${guideTitle(doc)}”?`)) save(doc.name, '')
-                }}
-              >
+            <MarkdownBlock>{doc.markdown}</MarkdownBlock>
+            {error && <p className={errorText}>{error}</p>}
+            <ModalActions>
+              <Button variant="ghost" disabled={busy} onClick={() => setConfirmDelete(true)}>
                 Delete
-              </button>
-              <span className="gm-spacer" />
-              <button className="btn ghost" disabled={busy} onClick={onClose}>
+              </Button>
+              <ConfirmDialog
+                open={confirmDelete}
+                onOpenChange={setConfirmDelete}
+                title={`Delete “${guideTitle(doc)}”?`}
+                description="Agents stop designing with this rule from their next task. Its version history is kept, so you can restore it later."
+                confirmLabel="Delete guide"
+                destructive
+                onConfirm={() => save(doc.name, '')}
+              />
+              <ModalSpacer />
+              <Button variant="ghost" disabled={busy} onClick={onClose}>
                 Close
-              </button>
-              <button className="btn ghost" disabled={busy} onClick={() => setMode('history')}>
+              </Button>
+              <Button variant="ghost" disabled={busy} onClick={() => setMode('history')}>
                 History
-              </button>
-              <button
-                className="btn primary"
+              </Button>
+              <Button
+                variant="primary"
                 disabled={busy}
                 onClick={() => {
                   setTitleDraft(guideTitle(doc))
@@ -384,12 +423,12 @@ function GuideModal({ canvasId, name, onClose }: { canvasId: string; name: strin
                 }}
               >
                 Edit
-              </button>
-            </div>
+              </Button>
+            </ModalActions>
           </>
         )}
-      </div>
-    </div>
+      </>
+    </Modal>
   )
 }
 
@@ -425,59 +464,63 @@ function GuideHistory({
 
   return (
     <>
-      <div className="gm-head">
-        <h2>{guideTitle(doc)} — history</h2>
+      <div className={modalHead}>
+        <ModalTitle>{guideTitle(doc)} — history</ModalTitle>
       </div>
-      {error && <p className="import-error">{error}</p>}
+      {error && <p className={errorText}>{error}</p>}
       {preview ? (
         <>
-          <div className="gp-meta">
+          <div className={meta}>
             {preview.markdown ? 'saved' : 'deleted'} by {preview.savedBy} · {new Date(preview.savedAt).toLocaleString()}
           </div>
           {preview.markdown ? (
-            <pre className="gm-markdown">{preview.markdown}</pre>
+            <MarkdownBlock>{preview.markdown}</MarkdownBlock>
           ) : (
-            <p className="lede">This version marks a deletion — there is nothing to show.</p>
+            <ModalLede>This version marks a deletion — there is nothing to show.</ModalLede>
           )}
-          <div className="close-row">
-            <button className="btn ghost" disabled={busy} onClick={() => setPreviewIdx(null)}>
+          <ModalActions>
+            <Button variant="ghost" disabled={busy} onClick={() => setPreviewIdx(null)}>
               Back
-            </button>
-            <span className="gm-spacer" />
-            <button
-              className="btn primary"
+            </Button>
+            <ModalSpacer />
+            <Button
+              variant="primary"
               disabled={busy || !preview.markdown || preview.markdown === doc.markdown}
               onClick={() => onRestore(preview.markdown)}
             >
               {busy ? 'Restoring…' : 'Restore this version'}
-            </button>
-          </div>
+            </Button>
+          </ModalActions>
         </>
       ) : (
         <>
-          <div className="gm-versions">
-            {versions?.length === 0 && <p className="lede">No versions recorded yet.</p>}
+          <div className="mt-3.5 overflow-hidden rounded-[12px] border border-line bg-surface">
+            {versions?.length === 0 && <ModalLede>No versions recorded yet.</ModalLede>}
             {(versions ?? []).map((v, i) => (
-              <button key={v.savedAt + v.savedBy} className="gp-item" onClick={() => setPreviewIdx(i)}>
-                <span className="gp-item-title">
+              <ListRow
+                key={v.savedAt + v.savedBy}
+                className="border-b-0 border-t border-line-soft first:border-t-0"
+                onClick={() => setPreviewIdx(i)}
+              >
+                <ListTitle>
                   {v.markdown === ''
                     ? 'deleted'
                     : v.markdown === doc.markdown
                       ? 'current'
                       : `v${(versions?.length ?? 0) - i}`}
-                </span>
-                <span className="gp-item-summary">{v.markdown ? summarize(v.markdown) : '—'}</span>
-                <span className="gp-item-meta">
+                </ListTitle>
+                <ListSummary>{v.markdown ? summarize(v.markdown) : '—'}</ListSummary>
+                <ListMeta>
                   {v.savedBy} · {new Date(v.savedAt).toLocaleString()}
-                </span>
-              </button>
+                </ListMeta>
+              </ListRow>
             ))}
           </div>
-          <div className="close-row">
-            <button className="btn ghost" disabled={busy} onClick={onBack}>
+          <ModalActions>
+            <Button variant="ghost" disabled={busy} onClick={onBack}>
               Back
-            </button>
-          </div>
+            </Button>
+          </ModalActions>
         </>
       )}
     </>

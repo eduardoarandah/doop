@@ -24,7 +24,7 @@ export function AgentIcon({ name, size = 13, color }: { name: string; size?: num
   if (!path)
     return (
       <svg
-        className="agent-glyph"
+        className="mr-px inline-block align-[-2px]"
         width={size}
         height={size}
         viewBox="0 0 24 24"
@@ -36,7 +36,14 @@ export function AgentIcon({ name, size = 13, color }: { name: string; size?: num
     )
   const fill = color ?? (n.includes('claude') ? '#D97757' : 'currentColor')
   return (
-    <svg className="agent-glyph" width={size} height={size} viewBox="0 0 24 24" fill={fill} aria-hidden>
+    <svg
+      className="mr-px inline-block align-[-2px]"
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill={fill}
+      aria-hidden
+    >
       <path d={path} />
     </svg>
   )

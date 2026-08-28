@@ -7,8 +7,12 @@ import { FlowOverlay } from './FlowOverlay'
 import { GhostFrames } from './GhostFrames'
 import { Cursors } from './Cursors'
 import { SnapGuides } from './SnapGuides'
-import { ContextMenu, MOD_KEY } from './ContextMenu'
+import { MOD_KEY } from '../lib/keys'
+import { cn } from '../lib/utils'
 import { hasFrameClip, pasteFrameAtScreen } from '../lib/frameClipboard'
+import { MenuHint } from './ui/menu'
+import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuTrigger } from './ui/context-menu'
+import { Toolbar, ToolbarButton, ToolbarDivider, ToolbarValue } from './ui/toolbar'
 
 const MIN_ZOOM = 0.08
 const MAX_ZOOM = 3
@@ -24,7 +28,8 @@ export function Stage({ onAddFrame }: { onAddFrame: () => void }) {
   const canvas = useStore((s) => s.canvas)
   const select = useStore((s) => s.select)
   const [panning, setPanning] = useState(false)
-  const [bgMenu, setBgMenu] = useState<{ x: number; y: number } | null>(null)
+  /* where the background menu opened, so Paste drops the frame there */
+  const bgAt = useRef({ x: 0, y: 0 })
   /* iframe oversampling factor — bumped only once the zoom settles */
   const [raster, setRaster] = useState(1)
   const fitted = useRef(false)
@@ -254,83 +259,89 @@ export function Stage({ onAddFrame }: { onAddFrame: () => void }) {
 
   return (
     <>
-      <div
-        ref={ref}
-        className={`stage ${panning ? 'panning' : ''}`}
-        onPointerDown={onPointerDown}
-        onPointerMove={onPointerMove}
-        onContextMenu={(e) => {
-          /* frames handle their own menu; this one is for the empty canvas */
-          const isBackground = e.target === e.currentTarget || (e.target as HTMLElement).classList.contains('world')
-          if (!isBackground) return
-          e.preventDefault()
-          setBgMenu({ x: e.clientX, y: e.clientY })
-        }}
-      >
-        {/* dot grid on its own composited layer: panning is transform-only
+      <ContextMenu>
+        <ContextMenuTrigger asChild>
+          <div
+            ref={ref}
+            /* `stage` is a behaviour hook, not a style: frameClipboard.ts queries
+           `.stage` to map screen coordinates into the canvas. No CSS is
+           attached to it — everything visual is in the utilities beside it. */
+            className={cn('stage absolute inset-0 touch-none', panning ? 'cursor-grabbing' : 'cursor-default')}
+            onPointerDown={onPointerDown}
+            onPointerMove={onPointerMove}
+            onContextMenu={(e) => {
+              /* frames stop the event on their own trigger, so anything arriving
+                 here is the empty canvas — except a right-click on a frame's
+                 chrome overlay, which is not a menu target at all */
+              const isBackground = e.target === e.currentTarget || (e.target as HTMLElement).classList.contains('world')
+              if (!isBackground) return e.preventDefault()
+              /* Paste drops the frame where the click landed. The menu's own
+                 box is not that point: Radix positions it after mount, and
+                 flips it away from a viewport edge. */
+              bgAt.current = { x: e.clientX, y: e.clientY }
+            }}
+          >
+            {/* dot grid on its own composited layer: panning is transform-only
             (zero paint), zooming repaints just this layer's tiny tile */}
-        <div className="grid-layer" ref={gridRef} />
-        <div className="world" ref={worldRef}>
-          {canvas?.frames.map((f) => (
-            <FrameView key={f.id} frame={f} raster={raster} />
-          ))}
-          <GhostFrames />
-          <FlowOverlay />
-          <SnapGuides />
-          <Cursors />
-        </div>
-      </div>
+            <div
+              className="pointer-events-none absolute left-0 top-0 h-[calc(100%+160px)] w-[calc(100%+160px)] origin-top-left will-change-transform [background-image:radial-gradient(circle,var(--dot)_1.2px,transparent_1.2px)]"
+              ref={gridRef}
+            />
+            {/* `world` is likewise a behaviour hook: pan hit-testing checks
+            classList.contains('world') to tell background from frame */}
+            <div className="world absolute left-0 top-0 origin-top-left will-change-transform" ref={worldRef}>
+              {canvas?.frames.map((f) => (
+                <FrameView key={f.id} frame={f} raster={raster} />
+              ))}
+              <GhostFrames />
+              <FlowOverlay />
+              <SnapGuides />
+              <Cursors />
+            </div>
+          </div>
+        </ContextMenuTrigger>
 
-      <div className="toolbar">
-        <button onClick={onAddFrame}>+ Frame</button>
-        <div className="divider" />
-        <button
-          onClick={() => {
-            const vp = useStore.getState().viewport
-            const el = ref.current!
-            zoomAround(el, vp, 1 / 1.25)
-          }}
-        >
-          −
-        </button>
-        <span className="zoom-label" ref={zoomLabelRef}>
-          100%
-        </span>
-        <button
-          onClick={() => {
-            const vp = useStore.getState().viewport
-            const el = ref.current!
-            zoomAround(el, vp, 1.25)
-          }}
-        >
-          +
-        </button>
-        <div className="divider" />
-        <button onClick={fit}>Fit</button>
-      </div>
-
-      {bgMenu && canvas && (
-        <ContextMenu at={bgMenu} onClose={() => setBgMenu(null)}>
-          <button
-            disabled={!hasFrameClip()}
+        <Toolbar className="absolute bottom-[calc(8px+env(safe-area-inset-bottom))] left-1/2 z-[35] -translate-x-1/2 sm:bottom-4">
+          <ToolbarButton onClick={onAddFrame}>+ Frame</ToolbarButton>
+          <ToolbarDivider />
+          <ToolbarButton
+            aria-label="Zoom out"
             onClick={() => {
-              setBgMenu(null)
-              pasteFrameAtScreen(canvas.id, bgMenu.x, bgMenu.y)
+              const vp = useStore.getState().viewport
+              const el = ref.current!
+              zoomAround(el, vp, 1 / 1.25)
             }}
           >
-            Paste
-            <span className="ctx-hint">{MOD_KEY}V</span>
-          </button>
-          <button
+            −
+          </ToolbarButton>
+          <ToolbarValue ref={zoomLabelRef}>100%</ToolbarValue>
+          <ToolbarButton
+            aria-label="Zoom in"
             onClick={() => {
-              setBgMenu(null)
-              onAddFrame()
+              const vp = useStore.getState().viewport
+              const el = ref.current!
+              zoomAround(el, vp, 1.25)
             }}
           >
-            New frame
-          </button>
-        </ContextMenu>
-      )}
+            +
+          </ToolbarButton>
+          <ToolbarDivider />
+          <ToolbarButton onClick={fit}>Fit</ToolbarButton>
+        </Toolbar>
+
+        {canvas && (
+          <ContextMenuContent>
+            <ContextMenuItem
+              disabled={!hasFrameClip()}
+              onSelect={() => pasteFrameAtScreen(canvas.id, bgAt.current.x, bgAt.current.y)}
+            >
+              Paste
+              <MenuHint>{MOD_KEY}V</MenuHint>
+            </ContextMenuItem>
+            <ContextMenuItem onSelect={onAddFrame}>New frame</ContextMenuItem>
+          </ContextMenuContent>
+        )}
+      </ContextMenu>
     </>
   )
 

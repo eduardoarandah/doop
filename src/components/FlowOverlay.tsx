@@ -98,7 +98,9 @@ export function FlowOverlay() {
 
   return (
     <svg
-      className="flow-overlay"
+      /* pointer events pass through: this is a read-only overlay above the
+         frames (z-6) that must never intercept a drag or a right-click */
+      className="pointer-events-none absolute z-[6] overflow-visible text-accent-ink"
       style={{ left: minX, top: minY, width: w, height: h }}
       viewBox={`${minX} ${minY} ${w} ${h}`}
     >
@@ -109,10 +111,26 @@ export function FlowOverlay() {
       </defs>
       {connectors.map((c, i) => (
         <g key={i}>
-          <rect x={c.box.x} y={c.box.y} width={c.box.w} height={c.box.h} rx={4} className="flow-hotspot" />
-          <path d={c.path} className="flow-line" markerEnd="url(#flow-arrow)" />
+          <rect
+            x={c.box.x}
+            y={c.box.y}
+            width={c.box.w}
+            height={c.box.h}
+            rx={4}
+            className="fill-brand/[0.08] stroke-current [stroke-dasharray:4_3] [stroke-width:1.5]"
+          />
+          <path
+            d={c.path}
+            className="fill-none stroke-current opacity-75 [stroke-width:2]"
+            markerEnd="url(#flow-arrow)"
+          />
           {c.count > 0 && (
-            <text x={c.mx} y={c.my} className="flow-count" textAnchor="middle">
+            <text
+              x={c.mx}
+              y={c.my}
+              className="fill-current text-[13px] font-semibold [paint-order:stroke] [stroke-width:4] stroke-surface"
+              textAnchor="middle"
+            >
               {c.count}×
             </text>
           )}

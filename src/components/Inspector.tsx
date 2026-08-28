@@ -3,10 +3,28 @@ import type { Frame } from '../../shared/types'
 import { useStore } from '../lib/store'
 import { api } from '../lib/api'
 import { deleteFrameTracked, recordUpdate } from '../lib/history'
+import { cn } from '@/lib/utils'
+import { Panel, PanelClose, PanelDisclosure, PanelHeader } from './ui/panel'
+import { Collapsible, CollapsibleContent } from './ui/collapsible'
+import { Button } from './ui/button'
+import { Input } from './ui/input'
+import { Field } from './ui/field'
+import { Textarea } from './ui/textarea'
 
 const HTML_OPEN_KEY = 'doop:inspector-html'
 
-export function Inspector({ frame }: { frame: Frame }) {
+/* the export row's buttons: the standard button, tightened, and tall enough
+   to hit on a phone */
+const exportBtn = 'px-[11px] py-[5px] text-xs no-underline max-md:min-h-9'
+
+export function Inspector({
+  frame,
+  surface = 'floating',
+}: {
+  frame: Frame
+  /* 'inline' when the inspector is filling a mobile Sheet */
+  surface?: 'floating' | 'inline'
+}) {
   const select = useStore((s) => s.select)
   /* the raw HTML editor is a power tool — collapsed by default so the panel
      reads as frame properties, not a code dump; the choice sticks */
@@ -55,56 +73,55 @@ export function Inspector({ frame }: { frame: Frame }) {
   }
 
   return (
-    <div className="side-panel inspector">
-      <header>
+    <Panel
+      surface={surface}
+      className={cn(
+        surface === 'floating' && 'left-3 top-3 max-h-[calc(100%-24px)] w-[340px]',
+        'max-md:overflow-y-auto max-md:overscroll-contain',
+      )}
+    >
+      <PanelHeader>
         Frame
-        <button onClick={() => select(null)} title="Close">
-          ✕
-        </button>
-      </header>
-      <div className="fields">
-        <div className="full">
-          <label>Name</label>
+        <PanelClose onClick={() => select(null)}>✕</PanelClose>
+      </PanelHeader>
+      <div className="grid grid-cols-2 gap-2.5 border-b border-line-soft px-4 py-3.5">
+        <Field label="Name" className="col-span-full">
           <NumberlessInput
             key={frame.id}
             value={frame.name}
             onCommit={(v) => v.trim() && commitMeta({ name: v.trim() })}
           />
-        </div>
-        <div>
-          <label>X</label>
+        </Field>
+        <Field label="X">
           <NumInput value={frame.x} onCommit={(v) => commitMeta({ x: v })} />
-        </div>
-        <div>
-          <label>Y</label>
+        </Field>
+        <Field label="Y">
           <NumInput value={frame.y} onCommit={(v) => commitMeta({ y: v })} />
-        </div>
-        <div>
-          <label>Width</label>
+        </Field>
+        <Field label="Width">
           <NumInput value={frame.width} onCommit={(v) => commitMeta({ width: Math.max(120, v) })} />
-        </div>
-        <div>
-          <label>Height</label>
+        </Field>
+        <Field label="Height">
           <NumInput value={frame.height} onCommit={(v) => commitMeta({ height: Math.max(80, v) })} />
-        </div>
+        </Field>
       </div>
-      <div className="export-row">
-        <label>Export</label>
-        <a className="btn" href={`/i/${frame.id}.png?scale=2&download`} title="Download as PNG (2×)">
-          PNG
-        </a>
-        <a className="btn" href={`/i/${frame.id}.jpg?scale=2&download`} title="Download as JPG (2×)">
-          JPG
-        </a>
-        <button
-          className="btn"
+      <div className="flex flex-wrap items-center gap-2 border-b border-line-soft px-3.5 py-2.5">
+        <span className="mr-0.5 text-[11px] font-semibold uppercase tracking-[0.08em] text-ink-faint">Export</span>
+        <Button asChild className={exportBtn} title="Download as PNG (2×)">
+          <a href={`/i/${frame.id}.png?scale=2&download`}>PNG</a>
+        </Button>
+        <Button asChild className={exportBtn} title="Download as JPG (2×)">
+          <a href={`/i/${frame.id}.jpg?scale=2&download`}>JPG</a>
+        </Button>
+        <Button
+          className={exportBtn}
           title="Add to design memory — will be used as reference"
           onClick={() => api.pinReference(frame.canvasId, frame.id).catch(console.error)}
         >
           ☆ Pin
-        </button>
-        <button
-          className="btn"
+        </Button>
+        <Button
+          className={exportBtn}
           title="Public image URL — always renders the current design; paste it as og:image or a blog featured image"
           onClick={() => {
             navigator.clipboard.writeText(`${location.origin}/i/${frame.id}.png?scale=2`)
@@ -113,38 +130,40 @@ export function Inspector({ frame }: { frame: Frame }) {
           }}
         >
           {copiedUrl ? '✓ copied' : 'Copy image URL'}
-        </button>
+        </Button>
       </div>
-      <button
-        className="html-toggle"
-        onClick={() => {
-          const next = !showHtml
+      <Collapsible
+        className="flex min-h-0 flex-col"
+        open={showHtml}
+        onOpenChange={(next) => {
           setShowHtml(next)
           localStorage.setItem(HTML_OPEN_KEY, next ? '1' : '0')
         }}
       >
-        <span>{'</>'} HTML</span>
-        <span className="html-toggle-arrow">{showHtml ? '▾' : '▸'}</span>
-      </button>
-      {showHtml && (
-        <textarea
-          ref={textareaRef}
-          className="html-editor"
-          value={draft}
-          spellCheck={false}
-          placeholder="<!doctype html>…"
-          onChange={(e) => onHtmlChange(e.target.value)}
-        />
-      )}
-      <footer>
-        <span className="save-state">
+        <PanelDisclosure>
+          <span>{'</>'} HTML</span>
+        </PanelDisclosure>
+        <CollapsibleContent className="flex min-h-0 flex-col">
+          <Textarea
+            ref={textareaRef}
+            variant="bare"
+            className="h-[320px] flex-none bg-[#17171b] p-3.5 font-mono text-xs leading-[1.55] text-[#e9e9ee] [tab-size:2] max-md:h-auto max-md:min-h-[160px] max-md:flex-1 md:text-xs"
+            value={draft}
+            spellCheck={false}
+            placeholder="<!doctype html>…"
+            onChange={(e) => onHtmlChange(e.target.value)}
+          />
+        </CollapsibleContent>
+      </Collapsible>
+      <footer className="flex items-center justify-between border-t border-line-soft px-4 py-2.5">
+        <span className="font-mono text-[11px] text-ink-faint">
           {saveState === 'dirty' ? 'saving…' : saveState === 'saved' ? 'saved ✓' : `last edit by ${frame.updatedBy}`}
         </span>
-        <button className="danger" onClick={() => deleteFrameTracked(frame)}>
+        <Button variant="bare-danger" size="sm" onClick={() => deleteFrameTracked(frame)}>
           Delete frame
-        </button>
+        </Button>
       </footer>
-    </div>
+    </Panel>
   )
 }
 
@@ -152,7 +171,10 @@ function NumberlessInput({ value, onCommit }: { value: string; onCommit: (v: str
   const [draft, setDraft] = useState(value)
   useEffect(() => setDraft(value), [value])
   return (
-    <input
+    <Input
+      variant="mono"
+      inputSize="sm"
+      className="font-sans font-semibold max-md:min-h-10"
       value={draft}
       onChange={(e) => setDraft(e.target.value)}
       onBlur={() => draft !== value && onCommit(draft)}
@@ -165,7 +187,10 @@ function NumInput({ value, onCommit }: { value: number; onCommit: (v: number) =>
   const [draft, setDraft] = useState(String(value))
   useEffect(() => setDraft(String(value)), [value])
   return (
-    <input
+    <Input
+      variant="mono"
+      inputSize="sm"
+      className="max-md:min-h-10"
       value={draft}
       onChange={(e) => setDraft(e.target.value)}
       onBlur={() => {

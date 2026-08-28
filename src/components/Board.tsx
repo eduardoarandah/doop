@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { useStore } from '../lib/store'
 import { api } from '../lib/api'
+import { cn } from '../lib/utils'
 import { timeAgo } from '../lib/time'
 import {
   AGENT_ROLES,
@@ -13,6 +14,10 @@ import {
 import type { AgentTask } from '../../shared/types'
 import { posthog } from '../lib/posthog'
 import { MeterLine, isResidentLimit, useAllowance } from './TeamAllowance'
+import { Button } from './ui/button'
+import { Textarea } from './ui/textarea'
+import { Card } from './ui/card'
+import { Dot } from './ui/dot'
 
 /**
  * Board view over the canvas's tasks: queued cards humans leave for agents,
@@ -24,6 +29,27 @@ import { MeterLine, isResidentLimit, useAllowance } from './TeamAllowance'
  * position in that pipeline.
  */
 
+/* class recipes shared across the board's cards and columns */
+const colHeadCls = 'mb-3.5 flex items-baseline gap-2 border-b border-line pb-3'
+const colHeadH2Cls = 'font-display text-[12px] font-[750] uppercase tracking-[0.14em]'
+const countCls = 'font-mono text-[11px] text-ink-faint'
+const cardBase = 'group relative px-4 py-3.5'
+const cardH3Cls = 'break-words pr-4 font-display text-[14.5px] font-[650] leading-[1.35] tracking-[-0.01em]'
+const metaCls =
+  'mt-[9px] flex flex-wrap items-center gap-1.5 text-[12px] text-ink-faint [&_b]:font-[650] [&_b]:text-ink-soft'
+/* the ✕ on a card: always reachable on touch, revealed on hover elsewhere */
+const dismissCls =
+  'absolute right-[9px] top-[9px] size-[22px] justify-center rounded-full p-0 text-xs opacity-100 hover:bg-paper-deep hover:text-ink sm:opacity-0 sm:group-hover:opacity-100 sm:focus-visible:opacity-100'
+const glyphCls = 'text-[10px] leading-none'
+const hintCls = 'text-[11.5px] text-ink-faint'
+
+const stepPhaseCls: Record<string, string> = {
+  past: 'border-line text-ink-faint opacity-55',
+  queued: 'border-ink-soft text-ink-soft',
+  working: 'border-brand bg-brand text-white',
+  ahead: 'border-line text-ink-faint',
+}
+
 function pipelineOf(t: AgentTask): string[] {
   return t.pipeline?.length ? t.pipeline : [DEFAULT_ROLE_ID]
 }
@@ -33,13 +59,21 @@ function Trail({ task, state }: { task: AgentTask; state: 'queued' | 'working' |
   const pipeline = pipelineOf(task)
   const at = Math.min(task.stage ?? 0, pipeline.length - 1)
   return (
-    <div className="pipe">
+    <div className="mt-[9px] flex flex-wrap items-center gap-x-[5px] gap-y-1">
       {pipeline.map((id, i) => {
         const role = roleById(id)
         const phase = state === 'done' || i < at ? 'past' : i === at ? state : 'ahead'
         return (
-          <span key={id} className={`pipe-step ${phase}`} title={role?.blurb}>
-            <span className="pipe-glyph">{role?.emoji ?? '✦'}</span>
+          <span
+            key={id}
+            className={cn(
+              'inline-flex items-center gap-1 whitespace-nowrap rounded-full border py-0.5 pl-1.5 pr-2 text-[11px] font-semibold',
+              stepPhaseCls[phase],
+              i > 0 && "before:-ml-0.5 before:mr-0.5 before:text-ink-faint before:content-['›']",
+            )}
+            title={role?.blurb}
+          >
+            <span className={glyphCls}>{role?.emoji ?? '✦'}</span>
             {role?.name ?? id}
           </span>
         )
@@ -51,34 +85,42 @@ function Trail({ task, state }: { task: AgentTask; state: 'queued' | 'working' |
 /** The roster: who is on the team, what each one owns, and what they're on. */
 function Team({ tasks, onPick }: { tasks: AgentTask[]; onPick: (id: string) => void }) {
   return (
-    <div className="team">
-      <div className="team-head">
-        <h2>The team</h2>
-        <span className="team-hint">Pick one to queue a card · @mention them on any element</span>
+    <div className="mb-[26px]">
+      <div className="mb-3 flex items-baseline gap-2.5 border-b border-line pb-2.5">
+        <h2 className={cn(colHeadH2Cls, 'text-ink-soft')}>The team</h2>
+        <span className={hintCls}>Pick one to queue a card · @mention them on any element</span>
       </div>
-      <div className="team-row">
+      <div className="flex flex-nowrap gap-2 overflow-x-auto pb-1 [scroll-snap-type:x_proximity] md:flex-wrap md:overflow-visible md:pb-0">
         {AGENT_ROLES.map((role) => {
           const working = tasks.find((t) => t.agentName === role.name && !t.endedAt && !t.failedAt)
           const waiting = tasks.filter(
             (t) => t.queuedBy && !t.agentName && !t.failedAt && !t.endedAt && pipelineOf(t)[t.stage ?? 0] === role.id,
           ).length
           return (
-            <button
+            <Button
               key={role.id}
-              className={`team-card${working ? ' busy' : ''}`}
+              variant="ghost"
+              className={cn(
+                'w-[178px] flex-none snap-start flex-col items-start gap-[3px] whitespace-normal rounded-[12px] bg-surface px-3 py-2.5 text-left font-normal hover:bg-surface hover:shadow-card',
+                working ? 'border-brand' : 'hover:border-ink-soft',
+              )}
               onClick={() => onPick(role.id)}
               title={`Queue a card for ${role.name}`}
             >
-              <span className="team-name">
-                <span className="pipe-glyph">{role.emoji}</span>
+              <span className="flex flex-wrap items-baseline gap-x-[5px] gap-y-[2px] font-display text-[13px] font-[650] tracking-[-0.01em] text-ink">
+                <span className={glyphCls}>{role.emoji}</span>
                 {role.name}
-                <span className="team-mention">@{role.id}</span>
+                <span className="font-mono text-[10px] font-normal text-ink-faint">@{role.id}</span>
               </span>
-              <span className="team-blurb">{role.blurb}</span>
-              <span className="team-state">
+              <span className="text-[11.5px] leading-[1.35] text-ink-faint">{role.blurb}</span>
+              <span className="mt-auto flex max-w-full items-center gap-[5px] overflow-hidden text-ellipsis whitespace-nowrap pt-1.5 font-mono text-[10.5px] text-ink-soft">
                 {working ? (
                   <>
-                    <span className="bdot" style={{ background: role.reviewer ? '#1e7a4c' : 'var(--accent)' }} />
+                    <Dot
+                      size="sm"
+                      className="animate-[stream-pulse_1.2s_ease-in-out_infinite]"
+                      style={{ background: role.reviewer ? '#1e7a4c' : 'var(--brand)' }}
+                    />
                     {working.status}
                   </>
                 ) : waiting > 0 ? (
@@ -87,7 +129,7 @@ function Team({ tasks, onPick }: { tasks: AgentTask[]; onPick: (id: string) => v
                   'idle'
                 )}
               </span>
-            </button>
+            </Button>
           )
         })}
       </div>
@@ -138,35 +180,46 @@ export function Board({ canvasId }: { canvasId: string }) {
   }
 
   return (
-    <div className="board-view">
+    <div className="absolute inset-0 overflow-auto px-4 pb-[calc(120px+env(safe-area-inset-bottom))] pt-[22px] [background:radial-gradient(circle,var(--dot)_1px,transparent_1px)_0_0/26px_26px,var(--paper)] md:px-[34px] md:pb-[60px] md:pt-[30px]">
       <Team tasks={tasks} onPick={composeFor} />
-      <div className="board">
+      <div className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-7 md:min-w-max md:grid-cols-[repeat(3,minmax(280px,380px))] md:gap-[34px]">
         <section>
-          <div className="bcol-head">
-            <h2>Queued</h2>
-            <span className="bcount">{queued.length + failed.length}</span>
+          <div className={colHeadCls}>
+            <h2 className={cn(colHeadH2Cls, 'text-ink-soft')}>Queued</h2>
+            <span className={countCls}>{queued.length + failed.length}</span>
           </div>
-          <div className="bcol">
+          <div className="flex flex-col gap-3">
             {failed.map((t) => (
-              <div key={t.id} className="bcard bfailed">
-                <button
-                  className="bdismiss"
+              <Card
+                key={t.id}
+                className={cn(
+                  cardBase,
+                  'border-accent-ink/45 [background:linear-gradient(145deg,rgba(229,83,60,0.08),var(--surface)_62%)]',
+                )}
+              >
+                <Button
+                  variant="bare"
+                  className={dismissCls}
                   aria-label="Remove this card"
                   title="Remove this card"
                   onClick={() => api.completeCard(canvasId, t.id).catch(console.error)}
                 >
                   ✕
-                </button>
-                <h3>{t.status}</h3>
+                </Button>
+                <h3 className={cardH3Cls}>{t.status}</h3>
                 <Trail task={t} state="queued" />
-                <div className="bmeta">
+                <div className={metaCls}>
                   <b>Attempt stopped</b>
                   {t.agentName ? <span> · {t.agentName}</span> : null}
                   <span> · {timeAgo(t.failedAt!)}</span>
                 </div>
-                <div className="bfailure">{t.failureReason ?? 'The agent did not finish this task.'}</div>
-                <button
-                  className="retry-action"
+                <div className="mt-[9px] text-[11.5px] leading-[1.4] text-accent-ink">
+                  {t.failureReason ?? 'The agent did not finish this task.'}
+                </div>
+                <Button
+                  variant="danger-solid"
+                  size="pill"
+                  className="mt-2.5 px-[11px] py-[5px]"
                   onClick={() =>
                     api.retryCard(canvasId, t.id).catch((err) => {
                       if (isResidentLimit(err)) useStore.getState().setLimitWall(true)
@@ -175,34 +228,43 @@ export function Board({ canvasId }: { canvasId: string }) {
                   }
                 >
                   ↻ Retry
-                </button>
-              </div>
+                </Button>
+              </Card>
             ))}
             {queued.map((t) => (
-              <div key={t.id} className="bcard">
-                <button
-                  className="bdismiss"
+              <Card key={t.id} className={cn(cardBase, 'bg-surface')}>
+                <Button
+                  variant="bare"
+                  className={dismissCls}
                   title="Remove this card"
                   onClick={() => api.completeCard(canvasId, t.id).catch(console.error)}
                 >
                   ✕
-                </button>
-                <h3>{t.status}</h3>
+                </Button>
+                <h3 className={cardH3Cls}>{t.status}</h3>
                 <Trail task={t} state="queued" />
-                <div className="bmeta">
+                <div className={metaCls}>
                   <b>{t.queuedBy}</b> · {timeAgo(t.startedAt)}
                 </div>
-                <div className="bwaiting">✦ waiting for {roleName(pipelineOf(t)[t.stage ?? 0])}</div>
-              </div>
+                <div className="mt-[9px] font-mono text-[11px] text-ink-faint">
+                  ✦ waiting for {roleName(pipelineOf(t)[t.stage ?? 0])}
+                </div>
+              </Card>
             ))}
             {draft === null ? (
-              <button className="bghost" onClick={openCompose}>
+              <Button
+                variant="ghost"
+                className="justify-center rounded-[14px] border-[1.5px] border-dashed p-3.5 text-[13px] font-[650] text-ink-faint hover:border-brand hover:bg-transparent hover:text-accent-ink"
+                onClick={openCompose}
+              >
                 + New card
-              </button>
+              </Button>
             ) : (
-              <div className="bcard bcompose">
-                <textarea
+              <Card className={cn(cardBase, 'bg-surface')}>
+                <Textarea
                   autoFocus
+                  variant="bare"
+                  className="min-h-[54px] md:text-[13.5px]"
                   value={draft}
                   placeholder="What should an agent work on?"
                   onChange={(e) => setDraft(e.target.value)}
@@ -214,45 +276,62 @@ export function Board({ canvasId }: { canvasId: string }) {
                     if (e.key === 'Escape') setDraft(null)
                   }}
                 />
-                <div className="assign">
-                  <div className="assign-head">
+                <div className="mt-1 border-t border-line pt-2.5">
+                  <div className="flex flex-col gap-1.5 text-[10.5px] font-bold uppercase tracking-[0.08em] text-ink-faint">
                     <span>Assign to</span>
-                    <div className="presets">
+                    <div className="-ml-1.5 flex flex-wrap gap-[3px]">
                       {PIPELINE_PRESETS.map((p) => (
-                        <button
+                        <Button
                           key={p.id}
-                          className={agents.join(',') === p.roles.join(',') ? 'on' : ''}
+                          variant="bare"
+                          className={cn(
+                            'rounded-full px-1.5 py-0.5 text-[10.5px] font-[650] normal-case tracking-normal',
+                            agents.join(',') === p.roles.join(',') && 'bg-paper-deep text-accent-ink',
+                          )}
                           onClick={() => setAgents(p.roles)}
                         >
                           {p.label}
-                        </button>
+                        </Button>
                       ))}
                     </div>
                   </div>
-                  <div className="agent-chips">
+                  <div className="mt-2 flex flex-wrap gap-1">
                     {AGENT_ROLES.map((role) => {
                       const at = agents.indexOf(role.id)
                       return (
-                        <button
+                        <Button
                           key={role.id}
-                          className={`agent-chip${at >= 0 ? ' on' : ''}`}
+                          variant="ghost"
+                          size="sm"
+                          className={cn(
+                            'gap-1 rounded-full px-2 py-1 text-[11.5px] text-ink-soft hover:border-ink-soft hover:bg-transparent',
+                            at >= 0 && 'border-ink bg-ink text-white hover:border-ink hover:bg-ink hover:text-white',
+                          )}
                           title={role.blurb}
                           onClick={() => toggle(role.id)}
                         >
-                          <span className="pipe-glyph">{role.emoji}</span>
+                          <span className={glyphCls}>{role.emoji}</span>
                           {role.name}
-                          {at >= 0 && agents.length > 1 && <span className="chip-order">{at + 1}</span>}
-                        </button>
+                          {at >= 0 && agents.length > 1 && (
+                            <span className="grid h-[13px] min-w-[13px] place-items-center rounded-full bg-white/25 font-mono text-[9.5px]">
+                              {at + 1}
+                            </span>
+                          )}
+                        </Button>
                       )
                     })}
                   </div>
                 </div>
-                <div className="bcompose-row">
-                  <button className="bpost" disabled={!draft.trim()} onClick={submit}>
+                <div className="mt-3 flex flex-wrap items-center gap-2.5">
+                  <Button
+                    className="rounded-full border-transparent bg-ink px-3.5 py-1.5 text-xs font-bold text-white shadow-none hover:translate-x-0 hover:translate-y-0 hover:shadow-none"
+                    disabled={!draft.trim()}
+                    onClick={submit}
+                  >
                     Queue it
-                  </button>
+                  </Button>
                   <MeterLine allowance={allowance} />
-                  <span className="bhint">
+                  <span className={hintCls}>
                     {agents.length === 0
                       ? 'Doop picks it up right away'
                       : agents.length === 1
@@ -260,24 +339,31 @@ export function Board({ canvasId }: { canvasId: string }) {
                         : `${roleName(agents[0])} starts, then ${agents.slice(1).map(roleName).join(' → ')}`}
                   </span>
                 </div>
-              </div>
+              </Card>
             )}
           </div>
         </section>
 
         <section>
-          <div className="bcol-head active">
-            <h2>In progress</h2>
-            <span className="bcount">{inProgress.length}</span>
+          <div className={colHeadCls}>
+            <h2 className={cn(colHeadH2Cls, 'text-accent-ink')}>In progress</h2>
+            <span className={countCls}>{inProgress.length}</span>
           </div>
-          <div className="bcol">
-            {inProgress.length === 0 && <div className="bempty">Nothing in flight</div>}
+          <div className="flex flex-col gap-3">
+            {inProgress.length === 0 && <div className="px-0.5 py-1 text-[13px] text-ink-faint">Nothing in flight</div>}
             {inProgress.map((t) => (
-              <div key={t.id} className="bcard working">
-                <h3>{t.status}</h3>
+              <Card
+                key={t.id}
+                className={cn(cardBase, 'border-brand bg-surface shadow-[0_0_0_1px_var(--brand),var(--shadow-card)]')}
+              >
+                <h3 className={cardH3Cls}>{t.status}</h3>
                 {t.queuedBy && <Trail task={t} state="working" />}
-                <div className="bmeta">
-                  <span className="bdot" style={{ background: t.color }} />
+                <div className={metaCls}>
+                  <Dot
+                    size="sm"
+                    className="animate-[stream-pulse_1.2s_ease-in-out_infinite]"
+                    style={{ background: t.color }}
+                  />
                   <b>
                     {roleByAgentName(t.agentName)?.emoji ?? '✦'} {t.agentName}
                   </b>
@@ -285,28 +371,30 @@ export function Board({ canvasId }: { canvasId: string }) {
                   {t.queuedBy && <span> · card from {t.queuedBy}</span>}
                   <span> · {timeAgo(t.claimedAt ?? t.startedAt)}</span>
                 </div>
-              </div>
+              </Card>
             ))}
           </div>
         </section>
 
         <section>
-          <div className="bcol-head">
-            <h2>Done</h2>
-            <span className="bcount">{done.length}</span>
+          <div className={colHeadCls}>
+            <h2 className={cn(colHeadH2Cls, 'text-ink-soft')}>Done</h2>
+            <span className={countCls}>{done.length}</span>
           </div>
-          <div className="bcol">
-            {done.length === 0 && <div className="bempty">Nothing yet</div>}
+          <div className="flex flex-col gap-3">
+            {done.length === 0 && <div className="px-0.5 py-1 text-[13px] text-ink-faint">Nothing yet</div>}
             {done.map((t) => (
-              <div key={t.id} className="bcard bdone">
-                <h3>{t.status}</h3>
+              <Card key={t.id} className={cn(cardBase, 'bg-transparent shadow-none')}>
+                <h3 className="break-words pr-4 font-display text-[13.5px] font-semibold leading-[1.35] tracking-[-0.01em] text-ink-soft">
+                  {t.status}
+                </h3>
                 {t.queuedBy && pipelineOf(t).length > 1 && <Trail task={t} state="done" />}
-                <div className="bmeta">
-                  <span className="bok">✓</span> {t.agentName || t.queuedBy}
+                <div className={metaCls}>
+                  <span className="font-[750] text-[#1e7a4c]">✓</span> {t.agentName || t.queuedBy}
                   {t.queuedBy && t.agentName && <span> · for {t.queuedBy}</span>}
                   <span> · {timeAgo(t.endedAt!)}</span>
                 </div>
-              </div>
+              </Card>
             ))}
           </div>
         </section>

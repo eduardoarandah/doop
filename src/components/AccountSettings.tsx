@@ -1,6 +1,15 @@
 import { useState } from 'react'
 import { authClient } from '../lib/auth'
 import { posthog } from '../lib/posthog'
+import { Button } from './ui/button'
+import { Input } from './ui/input'
+import { Badge } from './ui/badge'
+import { Note } from './ui/note'
+import { Card, CardDescription, CardHeader, CardRow, CardTitle } from './ui/card'
+
+/* settings fields are a fixed column on desktop and full width on a phone */
+const settingsCard = 'mt-4 max-w-[1000px] overflow-hidden sm:mt-5'
+const settingsInput = 'w-full sm:w-[280px]'
 
 /** The "Your account" pane of /settings: who you are on a canvas, and how you
  *  get back into one. Everything here is better-auth's own account surface —
@@ -66,114 +75,113 @@ export function AccountSettings() {
 
   return (
     <>
-      <section className="set-card">
-        <div className="set-head">
-          <h2>Profile</h2>
-          <p>
+      <Card className={settingsCard}>
+        <CardHeader>
+          <CardTitle>Profile</CardTitle>
+          <CardDescription>
             Your name is the identity shown on cursors, in the activity feed, and on everything you leave for an agent.
             Agents see the change within a minute.
-          </p>
-        </div>
+          </CardDescription>
+        </CardHeader>
 
-        <div className="set-row">
-          <span className="k">Name</span>
-          <span className="f">
-            <input
-              value={name}
-              onChange={(e) => {
-                setDraft(e.target.value)
-                setNameNote('')
-                setNameError('')
-              }}
-              maxLength={60}
-              aria-label="Display name"
-            />
-            {nameError ? (
-              <span className="set-msg bad">{nameError}</span>
-            ) : nameNote ? (
-              <span className="set-msg good">{nameNote}</span>
-            ) : dirty ? (
-              <span className="set-msg">Changed — not saved yet</span>
-            ) : null}
-          </span>
-          <span className="set-right">
-            <button className="btn small" disabled={!dirty || savingName} onClick={saveName}>
+        <CardRow
+          label="Name"
+          action={
+            <Button size="sm" disabled={!dirty || savingName} onClick={saveName}>
               {savingName ? 'Saving…' : 'Save'}
-            </button>
-          </span>
-        </div>
+            </Button>
+          }
+        >
+          <Input
+            className={settingsInput}
+            value={name}
+            onChange={(e) => {
+              setDraft(e.target.value)
+              setNameNote('')
+              setNameError('')
+            }}
+            maxLength={60}
+            aria-label="Display name"
+          />
+          {nameError ? (
+            <Note tone="error">{nameError}</Note>
+          ) : nameNote ? (
+            <Note tone="success">{nameNote}</Note>
+          ) : dirty ? (
+            <Note>Changed — not saved yet</Note>
+          ) : null}
+        </CardRow>
 
-        <div className="set-row">
-          <span className="k">Email</span>
-          <span className="f">
-            <span className="set-ro">{user?.email}</span>
-            {user?.emailVerified ? (
-              <span className="set-pill ok">verified</span>
+        <CardRow
+          label="Email"
+          action={
+            user?.emailVerified ? (
+              <Note>Sign-in address — not changeable yet</Note>
             ) : (
-              <span className="set-pill">unverified</span>
-            )}
-            {verifyNote && <span className="set-msg good">{verifyNote}</span>}
-          </span>
-          <span className="set-right">
-            {user?.emailVerified ? (
-              <span className="set-msg">Sign-in address — not changeable yet</span>
-            ) : (
-              <button className="btn small" onClick={resendVerification}>
+              <Button size="sm" onClick={resendVerification}>
                 Resend verification
-              </button>
-            )}
-          </span>
-        </div>
-      </section>
+              </Button>
+            )
+          }
+        >
+          <span className="min-w-0 font-mono text-[13px] [overflow-wrap:anywhere]">{user?.email}</span>
+          {user?.emailVerified ? (
+            <Badge className="border-[#3f9c52]/35 bg-[#3f9c52]/10 text-[10.5px] text-[#2f7a3f]">verified</Badge>
+          ) : (
+            <Badge className="text-[10.5px]">unverified</Badge>
+          )}
+          {verifyNote && <Note tone="success">{verifyNote}</Note>}
+        </CardRow>
+      </Card>
 
-      <section className="set-card">
-        <div className="set-head">
-          <h2>Password</h2>
-          <p>Changing it signs out every other browser and device — this one stays signed in.</p>
-        </div>
-        <div className="set-row">
-          <span className="k">Current password</span>
-          <span className="f">
-            <input
-              type="password"
-              value={current}
-              onChange={(e) => {
-                setCurrent(e.target.value)
-                setPwError('')
-              }}
-              autoComplete="current-password"
-              aria-label="Current password"
-            />
-          </span>
-        </div>
-        <div className="set-row">
-          <span className="k">New password</span>
-          <span className="f">
-            <input
-              type="password"
-              value={next}
-              onChange={(e) => {
-                setNext(e.target.value)
-                setPwError('')
-              }}
-              autoComplete="new-password"
-              aria-label="New password"
-            />
-            {pwError ? (
-              <span className="set-msg bad">{pwError}</span>
-            ) : pwNote ? (
-              <span className="set-msg good">{pwNote}</span>
-            ) : (
-              <span className="set-msg">At least 8 characters</span>
-            )}
-          </span>
-          <span className="set-right">
-            <button className="btn small" disabled={savingPw || !current || next.length < 8} onClick={savePassword}>
+      <Card className={settingsCard}>
+        <CardHeader>
+          <CardTitle>Password</CardTitle>
+          <CardDescription>
+            Changing it signs out every other browser and device — this one stays signed in.
+          </CardDescription>
+        </CardHeader>
+        <CardRow label="Current password">
+          <Input
+            className={settingsInput}
+            type="password"
+            value={current}
+            onChange={(e) => {
+              setCurrent(e.target.value)
+              setPwError('')
+            }}
+            autoComplete="current-password"
+            aria-label="Current password"
+          />
+        </CardRow>
+        <CardRow
+          label="New password"
+          action={
+            <Button size="sm" disabled={savingPw || !current || next.length < 8} onClick={savePassword}>
               {savingPw ? 'Updating…' : 'Update password'}
-            </button>
-          </span>
-        </div>
-      </section>
+            </Button>
+          }
+        >
+          <Input
+            className={settingsInput}
+            type="password"
+            value={next}
+            onChange={(e) => {
+              setNext(e.target.value)
+              setPwError('')
+            }}
+            autoComplete="new-password"
+            aria-label="New password"
+          />
+          {pwError ? (
+            <Note tone="error">{pwError}</Note>
+          ) : pwNote ? (
+            <Note tone="success">{pwNote}</Note>
+          ) : (
+            <Note>At least 8 characters</Note>
+          )}
+        </CardRow>
+      </Card>
     </>
   )
 }

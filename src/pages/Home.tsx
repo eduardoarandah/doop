@@ -3,16 +3,44 @@ import type { CanvasMeta } from '../../shared/types'
 import { colorFor } from '../../shared/types'
 import { api, type HomeActivity } from '../lib/api'
 import { authClient } from '../lib/auth'
-import { navigate, Logo } from '../App'
+import { navigate } from '../App'
+import { Logo } from '../components/Logo'
 import { timeAgo } from '../lib/time'
 import { AgentIcon } from '../components/AgentIcon'
 import { AccountMenu, ConnectCard, IconGrid, IconList, IconShare, IconUser } from '../components/DashShell'
 import { posthog } from '../lib/posthog'
+import { Tabs, TabsList, TabsTrigger } from '../components/ui/tabs'
+import { Button } from '../components/ui/button'
+import { Badge } from '../components/ui/badge'
+import { Input } from '../components/ui/input'
+import { Card, cardVariants } from '../components/ui/card'
+import { Skeleton } from '../components/ui/skeleton'
+import { Dot } from '../components/ui/dot'
+import { Wordmark } from '../components/ui/wordmark'
+import { SegmentedIconItem, SegmentedIcons } from '../components/ui/segmented'
+import {
+  DashContent,
+  DashHeader,
+  DashLayout,
+  DashMain,
+  DashNavItem,
+  DashSectionLabel,
+  DashSidebar,
+  DashSubtitle,
+  DashTitle,
+} from '../components/ui/dash'
+import { cn } from '@/lib/utils'
 
 /** an agent that worked this recently is treated as still at the desk */
 const LIVE_WINDOW = 5 * 60 * 1000
 
 type Scope = 'all' | 'mine' | 'shared'
+
+/* a canvas tile: the Card surface, made clickable */
+const cardCls = cn(
+  cardVariants(),
+  'overflow-hidden p-0 text-left transition-[translate,box-shadow,border-color] duration-150 hover:-translate-y-[3px] hover:border-ink-faint hover:shadow-pop',
+)
 
 export function Home() {
   const [canvases, setCanvases] = useState<CanvasMeta[] | null>(null)
@@ -100,13 +128,11 @@ export function Home() {
   const empty = canvases !== null && canvases.length === 0
 
   return (
-    <div className="dash">
-      <aside className="dash-rail">
-        <div className="home-mark dash-brand">
-          <Logo /> Doop
-        </div>
+    <DashLayout>
+      <DashSidebar>
+        <Wordmark size="sm" className="px-2 pb-5 text-[17px]" />
 
-        <nav className="dash-nav">
+        <nav className="flex flex-col gap-0.5">
           <NavItem
             icon={<IconGrid />}
             label="All canvases"
@@ -132,18 +158,31 @@ export function Home() {
 
         {agents.length > 0 && (
           <>
-            <div className="dash-label">Agents</div>
-            <div className="dash-agents">
+            <DashSectionLabel>Agents</DashSectionLabel>
+            <div className="flex flex-col gap-0.5">
               {agents.slice(0, 5).map((a) => (
-                <div key={a.name} className="dash-agent" title={`${a.canvases} canvas${a.canvases === 1 ? '' : 'es'}`}>
-                  <span className="dash-agent-ava" style={{ color: colorFor(a.name) }}>
+                <div
+                  key={a.name}
+                  className="flex min-w-0 items-center gap-[9px] px-2.5 py-[5px] text-[13px] text-ink-soft"
+                  title={`${a.canvases} canvas${a.canvases === 1 ? '' : 'es'}`}
+                >
+                  <span
+                    className="grid size-[22px] flex-none place-items-center rounded-[7px] bg-paper-deep"
+                    style={{ color: colorFor(a.name) }}
+                  >
                     <AgentIcon name={a.name} size={13} />
                   </span>
-                  <span className="dash-agent-name">{a.name}</span>
+                  <span className="truncate">{a.name}</span>
                   {a.lastAt > 0 && now - a.lastAt < LIVE_WINDOW ? (
-                    <span className="dash-live" title="working right now" />
+                    <Dot
+                      size="sm"
+                      className="ml-auto bg-[#3f9c52] shadow-[0_0_0_3px_rgba(63,156,82,0.15)]"
+                      title="working right now"
+                    />
                   ) : (
-                    <span className="dash-when">{a.lastAt > 0 ? timeAgo(a.lastAt) : ''}</span>
+                    <span className="ml-auto flex-none text-[11px] text-ink-faint">
+                      {a.lastAt > 0 ? timeAgo(a.lastAt) : ''}
+                    </span>
                   )}
                 </div>
               ))}
@@ -153,14 +192,18 @@ export function Home() {
 
         {activity.length > 0 && (
           <>
-            <div className="dash-label">Live now</div>
-            <div className="dash-feed">
+            <DashSectionLabel>Live now</DashSectionLabel>
+            <div className="flex flex-col gap-0.5">
               {activity.slice(0, 4).map((a) => (
-                <button key={a.id} className="dash-feed-item" onClick={() => navigate(`/c/${a.canvasId}`)}>
-                  <span className="dash-feed-dot" style={{ background: a.actorColor }} />
-                  <span className="dash-feed-text">
-                    <b>{a.actorName}</b> {a.message}
-                    <span className="dash-feed-when">
+                <button
+                  key={a.id}
+                  className="flex w-full gap-[9px] rounded-[9px] border-0 bg-transparent px-2.5 py-1.5 text-left transition-colors hover:bg-paper"
+                  onClick={() => navigate(`/c/${a.canvasId}`)}
+                >
+                  <Dot size="sm" className="mt-[5px]" style={{ background: a.actorColor }} />
+                  <span className="min-w-0 text-[12px] leading-[1.35] text-ink-soft">
+                    <b className="font-semibold text-ink">{a.actorName}</b> {a.message}
+                    <span className="mt-0.5 block truncate text-[10.5px] text-ink-faint">
                       {a.canvasName} · {timeAgo(a.at)}
                     </span>
                   </span>
@@ -170,108 +213,139 @@ export function Home() {
           </>
         )}
 
-        <div className="dash-grow" />
+        <div className="min-h-6 flex-1" />
         <ConnectCard />
-      </aside>
+      </DashSidebar>
 
-      <section className="dash-main">
-        <header className="dash-top">
-          <label className="dash-search">
+      <DashMain>
+        <DashHeader className="max-md:min-h-[104px]">
+          <Button
+            variant="bare"
+            className="min-h-10 gap-2 p-0 font-display text-base font-extrabold text-ink hover:bg-transparent md:hidden"
+            onClick={() => navigate('/')}
+            aria-label="Doop home"
+          >
+            <Logo className="size-7" /> Doop
+          </Button>
+          <label className="order-2 flex h-10 max-w-none flex-1 basis-full items-center gap-[9px] rounded-[10px] border border-line bg-surface px-[11px] text-ink-faint focus-within:border-ink-faint md:order-none md:h-[34px] md:max-w-[400px] md:basis-auto">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
               <circle cx="11" cy="11" r="7" />
               <path d="m20 20-3.2-3.2" />
             </svg>
-            <input
+            <Input
               ref={searchRef}
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               placeholder="Search canvases"
               aria-label="Search canvases"
+              variant="bare"
+              inputSize="auto"
+              className="flex-1 md:text-[13px]"
             />
-            <kbd>⌘K</kbd>
+            <kbd className="hidden flex-none rounded-[5px] border border-line px-[5px] py-px font-mono text-[10px] text-ink-faint md:block">
+              ⌘K
+            </kbd>
           </label>
-          <span className="spacer" />
-          <button className="btn primary" onClick={createCanvas}>
-            + New canvas
-          </button>
+          <span className="flex-1" />
+          <Button variant="primary" className="min-h-10 px-3 md:min-h-0 md:px-3.5" onClick={createCanvas}>
+            <span className="max-md:hidden">+ New canvas</span>
+            <span className="hidden max-md:inline">+ New</span>
+          </Button>
           <AccountMenu />
-        </header>
+        </DashHeader>
 
-        <div className="dash-body">
-          <div className="dash-head">
+        <DashContent>
+          <div className="flex items-start gap-4 md:items-end">
             <div>
-              <h1>
+              <DashTitle>
                 {daypart}, {first}
-                <em>.</em>
-              </h1>
-              <p className="sub">
+                <em className="not-italic text-brand">.</em>
+              </DashTitle>
+              <DashSubtitle>
                 {canvases === null
                   ? '…'
                   : `${counts.all} ${counts.all === 1 ? 'canvas' : 'canvases'} · ${frameTotal} ${
                       frameTotal === 1 ? 'frame' : 'frames'
                     }${agents.length ? ` · ${agents.length} ${agents.length === 1 ? 'agent' : 'agents'}` : ''}`}
-              </p>
+              </DashSubtitle>
             </div>
-            <div className="dash-seg" role="group" aria-label="View">
-              <button className={view === 'grid' ? 'on' : ''} onClick={() => setView('grid')} aria-label="Grid view">
+            <SegmentedIcons
+              className="ml-auto flex-none"
+              aria-label="View"
+              value={view}
+              onValueChange={(next) => setView(next as 'grid' | 'list')}
+            >
+              <SegmentedIconItem value="grid" aria-label="Grid view">
                 <IconGrid />
-              </button>
-              <button className={view === 'list' ? 'on' : ''} onClick={() => setView('list')} aria-label="List view">
+              </SegmentedIconItem>
+              <SegmentedIconItem value="list" aria-label="List view">
                 <IconList />
-              </button>
-            </div>
+              </SegmentedIconItem>
+            </SegmentedIcons>
           </div>
 
+          <Tabs value={scope} onValueChange={(next) => setScope(next as Scope)} className="mt-4 flex md:hidden">
+            <TabsList className="h-10 w-full border border-line bg-surface p-1 shadow-card">
+              <TabsTrigger value="all">All · {counts.all}</TabsTrigger>
+              <TabsTrigger value="mine">Mine · {counts.mine}</TabsTrigger>
+              <TabsTrigger value="shared">Shared · {counts.shared}</TabsTrigger>
+            </TabsList>
+          </Tabs>
+
           {empty ? (
-            <div className="dash-hero">
-              <h3>Start your first canvas</h3>
-              <p>
+            <Card className="mt-7 max-w-[560px] rounded-[18px] px-5 pb-6 pt-5 sm:px-7 sm:pb-7 sm:pt-[26px]">
+              <h3 className="font-display text-[20px] font-extrabold tracking-[-0.02em]">Start your first canvas</h3>
+              <p className="mb-[18px] mt-2.5 text-sm leading-[1.6] text-ink-soft">
                 A canvas is a shared space of live HTML frames — you design in the browser, your AI agents design
                 through MCP, and everyone watches everything happen in real time.
               </p>
-              <button className="btn primary" onClick={createCanvas}>
+              <Button variant="primary" onClick={createCanvas}>
                 + Create a canvas
-              </button>
-            </div>
+              </Button>
+            </Card>
           ) : (
             <>
               {canvases !== null && (
-                <div className="dash-tools">
+                <div className="mt-[18px] flex flex-wrap items-center gap-2.5 text-xs text-ink-faint xs:flex-nowrap">
                   {/* the total is already in the subtitle — only say something
                       here when a search or scope has narrowed it */}
                   {(query.trim() || scope !== 'all') && (
-                    <span className="dash-count">
+                    <span>
                       {visible.length} of {counts.all}
                     </span>
                   )}
-                  <span className="dash-sort">Sorted by last edited</span>
+                  <span className="ml-0 xs:ml-auto">Sorted by last edited</span>
                 </div>
               )}
 
               {canvases !== null && visible.length === 0 ? (
-                <p className="dash-none">Nothing matches — try a different search or scope.</p>
+                <p className="mt-7 text-[13.5px] text-ink-soft">Nothing matches — try a different search or scope.</p>
               ) : view === 'grid' ? (
-                <div className="canvas-grid">
+                <div className="mt-4 grid grid-cols-[minmax(0,1fr)] gap-3.5 xs:grid-cols-[repeat(auto-fill,minmax(214px,1fr))] md:gap-4">
                   {canvases !== null && (
-                    <button className="canvas-card new" onClick={createCanvas}>
-                      <span className="new-plus">+</span>
-                      <span className="new-label">New canvas</span>
-                    </button>
+                    <Button
+                      variant="ghost"
+                      className="min-h-16 flex-col justify-center gap-1.5 overflow-hidden rounded-[14px] border-[1.5px] border-dashed p-0 text-ink-faint hover:border-brand hover:bg-brand/[0.04] hover:text-accent-ink xs:min-h-full"
+                      onClick={createCanvas}
+                    >
+                      <span className="font-display text-[34px] font-bold leading-none">+</span>
+                      <span className="text-[13px] font-semibold">New canvas</span>
+                    </Button>
                   )}
                   {canvases === null &&
                     [0, 1, 2, 3].map((i) => (
-                      <div key={i} className="canvas-card skeleton" style={{ animationDelay: `${i * 0.12}s` }} />
+                      <Skeleton key={i} index={i} className={cn(cardCls, 'min-h-[230px] border-solid')} />
                     ))}
                   {visible.map((c) => (
-                    <button key={c.id} className="canvas-card" onClick={() => navigate(`/c/${c.id}`)}>
-                      <div className="card-preview">
+                    <button key={c.id} className={cn(cardCls, 'group')} onClick={() => navigate(`/c/${c.id}`)}>
+                      <div className="relative grid aspect-[16/10] place-items-center overflow-hidden border-b border-line-soft [background:radial-gradient(circle,var(--dot)_1px,transparent_1px)_0_0/18px_18px,var(--paper-deep)]">
                         <Preview canvas={c} />
                         <AgentStack canvas={c} />
                         {c.ownerId && !c.shared && <DeleteButton onDelete={() => remove(c.id, reload)} />}
                       </div>
-                      <div className="card-info">
-                        <div className="name">{c.name}</div>
-                        <div className="meta">
+                      <div className="px-3 pb-3 pt-2.5">
+                        <div className="truncate font-display text-[13.5px] font-semibold">{c.name}</div>
+                        <div className="mt-[5px] flex items-center gap-1.5 text-[11.5px] text-ink-faint">
                           <Meta canvas={c} onClaim={reload} />
                         </div>
                       </div>
@@ -279,33 +353,39 @@ export function Home() {
                   ))}
                 </div>
               ) : (
-                <div className="dash-list">
+                <div className="mt-4 overflow-hidden rounded-[14px] border border-line bg-surface shadow-card">
                   {visible.map((c) => (
-                    <button key={c.id} className="dash-row" onClick={() => navigate(`/c/${c.id}`)}>
-                      <span className="dash-row-thumb">
-                        <Preview canvas={c} />
+                    <button
+                      key={c.id}
+                      className="flex w-full items-center gap-2.5 border-0 border-b border-line-soft bg-transparent px-3 py-2.5 text-left transition-colors last:border-b-0 hover:bg-paper md:gap-[13px] md:px-3.5 md:py-[9px]"
+                      onClick={() => navigate(`/c/${c.id}`)}
+                    >
+                      <span className="grid h-9 w-[58px] flex-none place-items-center overflow-hidden rounded-[7px] border border-line-soft bg-paper-deep">
+                        <Preview canvas={c} blankSize="text-[9px]" />
                       </span>
-                      <span className="dash-row-name">{c.name}</span>
-                      <span className="dash-row-count">
+                      <span className="min-w-0 flex-1 truncate font-display text-[13.5px] font-semibold">{c.name}</span>
+                      <span className="hidden w-[82px] flex-none text-xs text-ink-faint sm:block">
                         {c.frameCount} frame{c.frameCount === 1 ? '' : 's'}
                       </span>
-                      <span className="dash-row-agents">
+                      <span className="hidden w-[62px] flex-none gap-[3px] xs:flex">
                         {(c.agents ?? []).slice(0, 3).map((a) => (
                           <i key={a.name} style={{ color: colorFor(a.name) }}>
                             <AgentIcon name={a.name} size={11} />
                           </i>
                         ))}
                       </span>
-                      <span className="dash-row-when">{timeAgo(c.updatedAt)}</span>
+                      <span className="w-auto flex-none text-right text-xs text-ink-faint md:w-[66px]">
+                        {timeAgo(c.updatedAt)}
+                      </span>
                     </button>
                   ))}
                 </div>
               )}
             </>
           )}
-        </div>
-      </section>
-    </div>
+        </DashContent>
+      </DashMain>
+    </DashLayout>
   )
 }
 
@@ -317,13 +397,14 @@ function remove(id: string, done: () => void) {
     .finally(done)
 }
 
-function Preview({ canvas }: { canvas: CanvasMeta }) {
-  if (!canvas.previewFrameId) return <span className="card-blank">empty canvas</span>
+function Preview({ canvas, blankSize = 'text-[12px]' }: { canvas: CanvasMeta; blankSize?: string }) {
+  if (!canvas.previewFrameId) return <span className={cn('text-ink-faint', blankSize)}>empty canvas</span>
   return (
     <img
       src={`/i/${canvas.previewFrameId}.jpg`}
       alt=""
       loading="lazy"
+      className="h-full w-full object-cover object-top"
       onError={(e) => {
         e.currentTarget.style.display = 'none'
       }}
@@ -336,9 +417,14 @@ function AgentStack({ canvas }: { canvas: CanvasMeta }) {
   const agents = (canvas.agents ?? []).slice(0, 3)
   if (!agents.length) return null
   return (
-    <span className="card-agents">
+    <span className="absolute left-2 top-2 flex gap-1">
       {agents.map((a) => (
-        <i key={a.name} style={{ color: colorFor(a.name) }} title={a.name}>
+        <i
+          key={a.name}
+          className="grid size-5 place-items-center rounded-[6px] border border-line bg-surface shadow-[0_1px_3px_rgba(18,18,23,0.1)]"
+          style={{ color: colorFor(a.name) }}
+          title={a.name}
+        >
           <AgentIcon name={a.name} size={11} />
         </i>
       ))}
@@ -352,17 +438,18 @@ function Meta({ canvas: c, onClaim }: { canvas: CanvasMeta; onClaim: () => void 
       <span>
         {c.frameCount} frame{c.frameCount === 1 ? '' : 's'}
       </span>
-      <span className="dot">·</span>
+      <span className="opacity-60">·</span>
       <span>{timeAgo(c.updatedAt)}</span>
       {c.shared && (
         <>
-          <span className="dot">·</span>
+          <span className="opacity-60">·</span>
           <span title="You were invited to collaborate on this canvas">shared with you</span>
         </>
       )}
       {!c.ownerId && (
-        <span
-          className="chip claim"
+        <Badge
+          tone="accent"
+          interactive
           title="This canvas predates accounts and is visible to everyone. Claim it to make it yours."
           onClick={async (e) => {
             e.stopPropagation()
@@ -371,7 +458,7 @@ function Meta({ canvas: c, onClaim }: { canvas: CanvasMeta; onClaim: () => void 
           }}
         >
           unclaimed — make mine
-        </span>
+        </Badge>
       )}
     </>
   )
@@ -391,11 +478,15 @@ function NavItem({
   go: () => void
 }) {
   return (
-    <button className={`dash-nav-item${on ? ' on' : ''}`} onClick={go} aria-current={on ? 'page' : undefined}>
-      {icon}
+    <DashNavItem
+      icon={icon}
+      count={count}
+      active={on}
+      onClick={go}
+      className="gap-2.5 text-[13.5px] [&_svg]:flex-none [&_svg]:opacity-70 [&_svg]:[stroke-linecap:round] [&_svg]:[stroke-linejoin:round]"
+    >
       {label}
-      <span className="dash-nav-count">{count}</span>
-    </button>
+    </DashNavItem>
   )
 }
 
@@ -409,7 +500,10 @@ function DeleteButton({ onDelete }: { onDelete: () => void }) {
   return (
     <span
       role="button"
-      className={`card-delete${armed ? ' armed' : ''}`}
+      className={cn(
+        'absolute right-2 top-2 grid h-10 min-w-10 cursor-pointer place-items-center rounded-full bg-ink/75 px-[7px] text-xs font-bold text-white opacity-100 transition-[opacity,background] md:h-6 md:min-w-6 md:opacity-0 md:group-hover:opacity-100',
+        armed ? 'bg-brand text-[11px] opacity-100' : 'hover:bg-ink',
+      )}
       title={armed ? 'Click again to permanently delete this canvas' : 'Delete canvas'}
       onClick={(e) => {
         e.stopPropagation()

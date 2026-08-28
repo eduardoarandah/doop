@@ -1,10 +1,21 @@
-import { useEffect, useRef, useState } from 'react'
+import { useState } from 'react'
 import { authClient } from '../lib/auth'
 import { navigate } from '../App'
 import { posthog } from '../lib/posthog'
 import { useMe } from '../lib/me'
 import { AgentIcon } from './AgentIcon'
-import { CodeBlock, ConnectModal } from './ConnectModal'
+import { ConnectModal } from './ConnectModal'
+import { CodeBlock } from './ui/code-block'
+import { Badge } from './ui/badge'
+import { Button } from './ui/button'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from './ui/dropdown-menu'
 
 /** Pieces the signed-in shell repeats on every page: the account menu in the
  *  top bar and the connect card pinned to the bottom of the rail. They live
@@ -18,78 +29,63 @@ export function initials(name?: string): string {
 }
 
 export function AccountMenu() {
-  const [open, setOpen] = useState(false)
   const { data: session } = authClient.useSession()
   const me = useMe(session?.user.id)
-  const ref = useRef<HTMLDivElement>(null)
-
-  useEffect(() => {
-    if (!open) return
-    function onDown(e: MouseEvent) {
-      if (!ref.current?.contains(e.target as Node)) setOpen(false)
-    }
-    function onKey(e: KeyboardEvent) {
-      if (e.key === 'Escape') setOpen(false)
-    }
-    document.addEventListener('mousedown', onDown)
-    window.addEventListener('keydown', onKey)
-    return () => {
-      document.removeEventListener('mousedown', onDown)
-      window.removeEventListener('keydown', onKey)
-    }
-  }, [open])
 
   return (
-    <div className="dash-account" ref={ref}>
-      <button
-        className="dash-me"
-        onClick={() => setOpen((o) => !o)}
-        aria-haspopup="menu"
-        aria-expanded={open}
-        aria-label="Account"
-      >
-        {initials(session?.user.name)}
-      </button>
-      {open && (
-        <div className="dash-pop" role="menu">
-          <div className="dash-who">
-            <span className="dash-who-ava">{initials(session?.user.name)}</span>
-            <span className="dash-who-text">
-              <span className="dash-who-name">{session?.user.name}</span>
-              <span className="dash-who-mail">{me?.email ?? session?.user.email}</span>
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button
+          variant="bare"
+          className="grid size-10 flex-none place-items-center rounded-[10px] bg-ink font-display text-[12.5px] font-bold text-white hover:bg-ink hover:text-white hover:opacity-90 sm:size-[34px]"
+          aria-label="Account"
+        >
+          {initials(session?.user.name)}
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent>
+        <DropdownMenuLabel className="flex items-center gap-[11px] px-2.5 pb-3 pt-[11px]">
+          <span className="grid size-[42px] flex-none place-items-center rounded-[12px] border border-line bg-paper-deep font-display text-[14px] font-extrabold">
+            {initials(session?.user.name)}
+          </span>
+          <span className="flex min-w-0 flex-col">
+            <span className="truncate font-display text-[14px] font-bold">{session?.user.name}</span>
+            <span className="mt-px truncate text-[12px] font-normal text-ink-faint">
+              {me?.email ?? session?.user.email}
             </span>
-          </div>
-          <div className="dash-plan">
-            <span className="chip">beta</span> Free while in beta
-          </div>
-          <hr />
-          <button className="dash-item" role="menuitem" onClick={() => navigate('/settings')}>
-            <IconGear /> Settings
-          </button>
-          {me?.admin && (
-            <button className="dash-item" role="menuitem" onClick={() => navigate('/admin')}>
-              <IconShield /> Admin
-            </button>
-          )}
-          <a className="dash-item" role="menuitem" href="/blog" target="_blank" rel="noopener noreferrer">
+          </span>
+        </DropdownMenuLabel>
+        <div className="mx-2.5 mb-2 flex items-center gap-[7px] text-[11.5px] text-ink-soft">
+          <Badge>beta</Badge> Free while in beta
+        </div>
+        <DropdownMenuSeparator />
+        <DropdownMenuItem onSelect={() => navigate('/settings')}>
+          <IconGear /> Settings
+        </DropdownMenuItem>
+        {me?.admin && (
+          <DropdownMenuItem onSelect={() => navigate('/admin')}>
+            <IconShield /> Admin
+          </DropdownMenuItem>
+        )}
+        <DropdownMenuItem asChild>
+          <a href="/blog" target="_blank" rel="noopener noreferrer">
             <IconHelp /> Help &amp; docs
           </a>
-          <hr />
-          <button
-            className="dash-item dash-out"
-            role="menuitem"
-            onClick={() =>
-              authClient.signOut().then(() => {
-                posthog.reset()
-                location.reload()
-              })
-            }
-          >
-            <IconOut /> Log out
-          </button>
-        </div>
-      )}
-    </div>
+        </DropdownMenuItem>
+        <DropdownMenuSeparator />
+        <DropdownMenuItem
+          tone="danger"
+          onSelect={() =>
+            authClient.signOut().then(() => {
+              posthog.reset()
+              location.reload()
+            })
+          }
+        >
+          <IconOut /> Log out
+        </DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
   )
 }
 
@@ -99,18 +95,29 @@ export function ConnectCard() {
   const [showConnect, setShowConnect] = useState(false)
   return (
     <>
-      <div className="dash-connect">
-        <b>Connect an agent</b>
-        <p>Any MCP client — one command, one browser approval.</p>
-        <span className="dash-marks">
+      <div className="rounded-[12px] border border-dashed border-line px-[13px] py-3">
+        <b className="block font-display text-[12.5px]">Connect an agent</b>
+        <p className="mt-[3px] text-[11.5px] leading-[1.45] text-ink-faint">
+          Any MCP client — one command, one browser approval.
+        </p>
+        <span className="mt-[9px] flex items-center gap-2">
           <AgentIcon name="claude" size={14} />
           <AgentIcon name="codex" size={14} color="var(--ink)" />
-          <em>+ any MCP</em>
+          <em className="text-[10.5px] not-italic text-ink-faint">+ any MCP</em>
         </span>
-        <CodeBlock text={`claude mcp add --transport http doop "${location.origin}/mcp"`} />
-        <button className="dash-more" onClick={() => setShowConnect(true)}>
+        <CodeBlock
+          density="rail"
+          className="mt-2"
+          text={`claude mcp add --transport http doop "${location.origin}/mcp"`}
+        />
+        <Button
+          variant="link"
+          size="sm"
+          className="mt-[9px] px-0 py-0 text-[11.5px] text-accent-ink underline-offset-[3px]"
+          onClick={() => setShowConnect(true)}
+        >
           Codex &amp; other clients →
-        </button>
+        </Button>
       </div>
       {showConnect && <ConnectModal onClose={() => setShowConnect(false)} />}
     </>

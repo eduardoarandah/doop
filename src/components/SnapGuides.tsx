@@ -11,7 +11,9 @@ export const SnapGuides = memo(function SnapGuides() {
       {guides.map((g, i) => (
         <div
           key={i}
-          className={`snap-guide ${g.axis}`}
+          className={`pointer-events-none absolute z-[25] bg-brand ${
+            g.axis === 'v' ? 'w-[calc(1px/var(--zoom,1))]' : 'h-[calc(1px/var(--zoom,1))]'
+          }`}
           style={
             g.axis === 'v'
               ? { left: g.at, top: g.from, height: g.to - g.from }

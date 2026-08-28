@@ -1,93 +1,59 @@
+import type { MutableRefObject } from 'react'
 import type { Frame } from '../../shared/types'
 import { api } from '../lib/api'
 import { copyFrame, duplicateFrame, hasFrameClip, pasteFrameAtScreen } from '../lib/frameClipboard'
 import { deleteFrameTracked } from '../lib/history'
-import { ContextMenu, MOD_KEY } from './ContextMenu'
+import { MOD_KEY } from '../lib/keys'
+import { ContextMenuContent, ContextMenuItem, ContextMenuSeparator } from './ui/context-menu'
+import { MenuHint } from './ui/menu'
 
-/** Right-click menu for a frame. */
-export function FrameContextMenu({
-  frame,
-  at,
-  onClose,
-}: {
-  frame: Frame
-  at: { x: number; y: number }
-  onClose: () => void
-}) {
+/** Right-click menu for a frame. FrameView owns the trigger, and passes the
+ *  point the right-click happened at — Paste lands there. */
+export function FrameContextMenu({ frame, at }: { frame: Frame; at: MutableRefObject<{ x: number; y: number }> }) {
   return (
-    <ContextMenu at={at} onClose={onClose}>
-      <button
-        onClick={() => {
-          copyFrame(frame)
-          onClose()
-        }}
-      >
+    <ContextMenuContent>
+      <ContextMenuItem onSelect={() => copyFrame(frame)}>
         Copy
-        <span className="ctx-hint">{MOD_KEY}C</span>
-      </button>
-      <button
+        <MenuHint>{MOD_KEY}C</MenuHint>
+      </ContextMenuItem>
+      <ContextMenuItem
         disabled={!hasFrameClip()}
-        onClick={() => {
-          onClose()
-          pasteFrameAtScreen(frame.canvasId, at.x, at.y)
-        }}
+        onSelect={() => pasteFrameAtScreen(frame.canvasId, at.current.x, at.current.y)}
       >
         Paste
-        <span className="ctx-hint">{MOD_KEY}V</span>
-      </button>
-      <button
-        onClick={() => {
-          onClose()
-          duplicateFrame(frame)
-        }}
-      >
+        <MenuHint>{MOD_KEY}V</MenuHint>
+      </ContextMenuItem>
+      <ContextMenuItem onSelect={() => duplicateFrame(frame)}>
         Duplicate
-        <span className="ctx-hint">{MOD_KEY}D</span>
-      </button>
-      <hr />
-      <button
-        onClick={() => {
-          navigator.clipboard.writeText(`${location.origin}/c/${frame.canvasId}?frame=${frame.id}`)
-          onClose()
-        }}
+        <MenuHint>{MOD_KEY}D</MenuHint>
+      </ContextMenuItem>
+      <ContextMenuSeparator />
+      <ContextMenuItem
+        onSelect={() => navigator.clipboard.writeText(`${location.origin}/c/${frame.canvasId}?frame=${frame.id}`)}
       >
         Copy link
-      </button>
-      <button
-        onClick={() => {
-          navigator.clipboard.writeText(`${location.origin}/i/${frame.id}.png?scale=2`)
-          onClose()
-        }}
-      >
+      </ContextMenuItem>
+      <ContextMenuItem onSelect={() => navigator.clipboard.writeText(`${location.origin}/i/${frame.id}.png?scale=2`)}>
         Copy image URL
-      </button>
-      <a href={`/i/${frame.id}.png?scale=2&download`} onClick={onClose}>
-        Download PNG
-      </a>
-      <a href={`/i/${frame.id}.jpg?scale=2&download`} onClick={onClose}>
-        Download JPG
-      </a>
-      <hr />
-      <button
+      </ContextMenuItem>
+      <ContextMenuItem asChild>
+        <a href={`/i/${frame.id}.png?scale=2&download`}>Download PNG</a>
+      </ContextMenuItem>
+      <ContextMenuItem asChild>
+        <a href={`/i/${frame.id}.jpg?scale=2&download`}>Download JPG</a>
+      </ContextMenuItem>
+      <ContextMenuSeparator />
+      <ContextMenuItem
         title="Will be used as reference — agents copy its style in new designs"
-        onClick={() => {
-          onClose()
-          api.pinReference(frame.canvasId, frame.id).catch(console.error)
-        }}
+        onSelect={() => api.pinReference(frame.canvasId, frame.id).catch(console.error)}
       >
         Add to design memory
-      </button>
-      <hr />
-      <button
-        className="danger"
-        onClick={() => {
-          onClose()
-          deleteFrameTracked(frame)
-        }}
-      >
+      </ContextMenuItem>
+      <ContextMenuSeparator />
+      <ContextMenuItem tone="danger" onSelect={() => deleteFrameTracked(frame)}>
         Delete frame
-        <span className="ctx-hint">⌫</span>
-      </button>
-    </ContextMenu>
+        <MenuHint>⌫</MenuHint>
+      </ContextMenuItem>
+    </ContextMenuContent>
   )
 }

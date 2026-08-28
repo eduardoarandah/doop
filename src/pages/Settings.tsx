@@ -1,11 +1,27 @@
 import { useState } from 'react'
-import { navigate, Logo } from '../App'
+import { navigate } from '../App'
 import { api } from '../lib/api'
 import { posthog } from '../lib/posthog'
 import { ModelAccountPanel } from '../components/ModelAccount'
 import { useAllowance } from '../components/TeamAllowance'
 import { AccountSettings } from '../components/AccountSettings'
 import { AccountMenu, ConnectCard, IconBack, IconChevron, IconSpark, IconUser } from '../components/DashShell'
+import { Tabs, TabsList, TabsTrigger } from '../components/ui/tabs'
+import { Button } from '../components/ui/button'
+import { Wordmark } from '../components/ui/wordmark'
+import { Card, CardDescription, CardHeader, CardTitle } from '../components/ui/card'
+import { Progress } from '../components/ui/progress'
+import {
+  DashContent,
+  DashHeader,
+  DashLayout,
+  DashMain,
+  DashNavItem,
+  DashSectionLabel,
+  DashSidebar,
+  DashSubtitle,
+  DashTitle,
+} from '../components/ui/dash'
 
 type Pane = 'agent' | 'account'
 
@@ -45,93 +61,108 @@ export function Settings() {
             ? 'Your free tasks are used up.'
             : `${left} of ${allowance.limit} free task${allowance.limit === 1 ? '' : 's'} left.`
       : null
-  const filled = allowance && allowance.limit > 0 ? Math.round(((left ?? 0) / allowance.limit) * 100) : 0
 
   return (
-    <div className="dash">
-      <aside className="dash-rail">
-        <div className="home-mark dash-brand">
-          <Logo /> Doop
-        </div>
+    <DashLayout>
+      <DashSidebar>
+        <Wordmark size="sm" className="px-2 pb-5 text-[17px]" />
 
-        <button className="dash-back" onClick={() => navigate(back)}>
+        <Button
+          variant="ghost"
+          className="w-full justify-start gap-[9px] rounded-[9px] px-[10px] py-2 text-[13px] text-ink-soft hover:bg-paper hover:text-ink"
+          onClick={() => navigate(back)}
+        >
           <IconBack /> {back === '/' ? 'Back to canvases' : 'Back to canvas'}
-        </button>
+        </Button>
 
-        <div className="dash-label">Settings</div>
-        <nav className="dash-nav">
-          <button
-            className={`dash-nav-item${pane === 'agent' ? ' on' : ''}`}
-            onClick={() => setPane('agent')}
-            aria-current={pane === 'agent' ? 'page' : undefined}
-          >
-            <IconSpark /> Doop Agent
-          </button>
-          <button
-            className={`dash-nav-item${pane === 'account' ? ' on' : ''}`}
-            onClick={() => setPane('account')}
-            aria-current={pane === 'account' ? 'page' : undefined}
-          >
-            <IconUser /> Your account
-          </button>
+        <DashSectionLabel>Settings</DashSectionLabel>
+        <nav className="flex flex-col gap-0.5">
+          <DashNavItem icon={<IconSpark />} active={pane === 'agent'} onClick={() => setPane('agent')}>
+            Doop Agent
+          </DashNavItem>
+          <DashNavItem icon={<IconUser />} active={pane === 'account'} onClick={() => setPane('account')}>
+            Your account
+          </DashNavItem>
         </nav>
 
-        <div className="dash-grow" />
+        <div className="min-h-6 flex-1" />
         <ConnectCard />
-      </aside>
+      </DashSidebar>
 
-      <section className="dash-main">
-        <header className="dash-top">
-          <nav className="dash-crumb" aria-label="Breadcrumb">
-            <button onClick={() => navigate('/')}>Home</button>
+      <DashMain>
+        <DashHeader>
+          <nav className="flex items-center gap-2 text-[13px] text-ink-faint" aria-label="Breadcrumb">
+            <Button
+              variant="link"
+              size="sm"
+              className="px-0 py-0 text-[13px] font-normal text-ink-faint hover:text-ink"
+              onClick={() => navigate('/')}
+            >
+              Home
+            </Button>
             <IconChevron />
-            <b>Settings</b>
+            <b className="font-semibold text-ink">Settings</b>
           </nav>
-          <span className="spacer" />
-          <button className="btn primary" onClick={createCanvas}>
-            + New canvas
-          </button>
+          <span className="flex-1" />
+          <Button variant="primary" className="min-h-10 max-xs:px-3 md:min-h-0" onClick={createCanvas}>
+            <span className="max-xs:hidden">+ New canvas</span>
+            <span className="hidden max-xs:inline">+ New</span>
+          </Button>
           <AccountMenu />
-        </header>
+        </DashHeader>
 
-        <div className="dash-body">
-          <div className="dash-head">
+        <DashContent>
+          <div className="flex items-start gap-4 md:items-end">
             <div>
-              <h1>{pane === 'agent' ? 'Doop Agent' : 'Your account'}</h1>
-              <p className="sub">
+              <DashTitle>{pane === 'agent' ? 'Doop Agent' : 'Your account'}</DashTitle>
+              <DashSubtitle>
                 {pane === 'agent'
                   ? 'Which model account the agent runs on, for every canvas you work on.'
                   : 'Who you are on every canvas — and how you get back into this one.'}
-              </p>
+              </DashSubtitle>
             </div>
           </div>
 
+          <Tabs value={pane} onValueChange={(next) => setPane(next as Pane)} className="mt-4 flex md:hidden">
+            <TabsList className="h-10 w-full border border-line bg-surface p-1 shadow-card">
+              <TabsTrigger value="agent">
+                <IconSpark /> Doop Agent
+              </TabsTrigger>
+              <TabsTrigger value="account">
+                <IconUser /> Your account
+              </TabsTrigger>
+            </TabsList>
+          </Tabs>
+
           {pane === 'agent' ? (
-            <section className="set-card">
-              <div className="set-head">
-                <h2>Doop Agent</h2>
-                <p>
+            <Card className="mt-4 max-w-[1000px] overflow-hidden sm:mt-5">
+              <CardHeader>
+                <CardTitle>Doop Agent</CardTitle>
+                <CardDescription>
                   The Doop Agent designs on your canvases without a client to connect. Every account gets a few tasks on
                   us. Connect an account of your own and it takes over from the next task — no limits, nothing metered.
-                </p>
+                </CardDescription>
                 {meter && (
-                  <div className="set-meter">
+                  <div className="mt-[11px] flex flex-col items-start gap-[7px] text-[11.5px] text-ink-faint sm:flex-row sm:items-center sm:gap-2.5">
                     {allowance && allowance.limit > 0 && !allowance.byoModel && (
-                      <span className="set-bar">
-                        <i style={{ width: `${filled}%` }} />
-                      </span>
+                      <Progress
+                        className="w-[min(100%,240px)] sm:w-[180px]"
+                        value={left ?? 0}
+                        max={allowance.limit}
+                        aria-label="Free Doop Agent tasks left"
+                      />
                     )}
                     <span>{meter}</span>
                   </div>
                 )}
-              </div>
+              </CardHeader>
               <ModelAccountPanel onChange={refresh} />
-            </section>
+            </Card>
           ) : (
             <AccountSettings />
           )}
-        </div>
-      </section>
-    </div>
+        </DashContent>
+      </DashMain>
+    </DashLayout>
   )
 }

@@ -2,7 +2,8 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { useStore } from '../lib/store'
 import { connect, disconnect, sendWs } from '../lib/ws'
 import { api, ApiError, type CanvasMember, type DiscoveredSite, type SyncKeyInfo } from '../lib/api'
-import { navigate, Logo } from '../App'
+import { navigate } from '../App'
+import { Logo } from '../components/Logo'
 import { Stage } from '../components/Stage'
 import { Board } from '../components/Board'
 import { Inspector } from '../components/Inspector'
@@ -13,12 +14,27 @@ import { PromptBar } from '../components/PromptBar'
 import { WorkingNow } from '../components/WorkingNow'
 import { Onboarding } from '../components/Onboarding'
 import { BrainIcon } from '../components/BrainIcon'
-import { AgentIcon, agentBrand } from '../components/AgentIcon'
 import { getIdentity, setName } from '../lib/identity'
 import { copyFrame, duplicateFrame, hasFrameClip, pasteFrameCentered, pasteImagesCentered } from '../lib/frameClipboard'
 import { clearHistory, deleteFrameTracked, recordCreate, redo, undo } from '../lib/history'
 import { authClient } from '../lib/auth'
 import { posthog } from '../lib/posthog'
+import { useIsMobile } from '../hooks/use-mobile'
+import { cn } from '@/lib/utils'
+import { Button } from '../components/ui/button'
+import { Sheet, SheetContent, SheetDescription, SheetTitle } from '../components/ui/sheet'
+import { XIcon } from '../components/ui/icons'
+import { Badge } from '../components/ui/badge'
+import { Input } from '../components/ui/input'
+import { Field } from '../components/ui/field'
+import { Avatar } from '../components/ui/avatar'
+import { Checkbox, CheckboxCard } from '../components/ui/checkbox'
+import { Segmented, SegmentedItem } from '../components/ui/segmented'
+import { Toast, ToastAction } from '../components/ui/toast'
+import { Tooltip } from '../components/ui/tooltip'
+import { Note } from '../components/ui/note'
+import { Textarea } from '../components/ui/textarea'
+import { Modal, ModalActions, ModalEyebrow, ModalLede, ModalTitle } from '../components/ui/modal'
 
 const STARTER_HTML = `<!doctype html>
 <html>
@@ -40,17 +56,24 @@ const STARTER_HTML = `<!doctype html>
 </body>
 </html>`
 
+/* Small captions the import flow repeats under its fields. */
+const importNoteCls = 'mt-2.5 text-[11.5px] leading-[1.4] text-ink-faint'
+const errorNoteCls = 'mt-2.5 text-[13px] text-accent-ink'
+
 export function CanvasPage({ canvasId }: { canvasId: string }) {
   const canvas = useStore((s) => s.canvas)
   const connected = useStore((s) => s.connected)
   const presences = useStore((s) => s.presences)
   const selectedId = useStore((s) => s.selectedId)
   const select = useStore((s) => s.select)
-  const [showActivity, setShowActivity] = useState(true)
+  const isMobile = useIsMobile()
+  const [showActivity, setShowActivity] = useState(() => !window.matchMedia('(max-width: 900px)').matches)
   const [view, setView] = useState<'canvas' | 'board'>('canvas')
   const [showConnect, setShowConnect] = useState(false)
   const [showShare, setShowShare] = useState(false)
   const [showImport, setShowImport] = useState(false)
+  const [showMobileActions, setShowMobileActions] = useState(false)
+  const [renaming, setRenaming] = useState(false)
   const [toast, setToast] = useState<string | null>(null)
   const updateReady = useStore((s) => s.updateReady)
   const limitWall = useStore((s) => s.limitWall)
@@ -182,100 +205,147 @@ export function CanvasPage({ canvasId }: { canvasId: string }) {
   const deferPanel = useStore((s) => !!s.ctxMenu?.deferPanel)
 
   return (
-    <div className="workspace">
-      <div className="topbar">
-        <button className="logo-btn" onClick={() => navigate('/')} title="All canvases">
-          <Logo />
-        </button>
-        <CanvasName />
-        <span className="chip" title="Canvas id — agents use this with the MCP tools">
-          {canvasId}
-        </span>
-        <div className="view-toggle" role="tablist" aria-label="View">
-          <button className={view === 'canvas' ? 'on' : ''} onClick={() => setView('canvas')}>
-            Canvas
-          </button>
-          <button className={view === 'board' ? 'on' : ''} onClick={() => setView('board')}>
-            Board
-          </button>
+    /* --app-inset is 0 normally; the impersonation shell raises it so this
+       fixed layer starts below the banner instead of under it */
+    <div className="fixed inset-x-0 bottom-0 top-[var(--app-inset,0px)] flex flex-col">
+      <div className="z-40 flex h-[52px] flex-none items-center gap-3 border-b border-line bg-surface px-3 max-md:h-[112px] max-md:flex-wrap max-md:content-center max-md:gap-x-2 max-md:gap-y-1.5 max-md:px-2 max-md:py-2">
+        <div className="flex min-w-0 items-center gap-1.5 max-md:basis-full">
+          <Tooltip label="All canvases" side="bottom" align="start">
+            <Button
+              variant="bare"
+              size="icon-sm"
+              className="size-9 hover:bg-paper-deep"
+              onClick={() => navigate('/')}
+              aria-label="All canvases"
+            >
+              <Logo className="size-6" />
+            </Button>
+          </Tooltip>
+          <CanvasName />
+          <Badge className="max-md:hidden" title="Canvas id — agents use this with the MCP tools">
+            {canvasId}
+          </Badge>
+          {!connected && (
+            <Badge tone="accent" className="max-md:ml-auto">
+              reconnecting…
+            </Badge>
+          )}
         </div>
-        {!connected && (
-          <span className="chip" style={{ color: 'var(--accent-ink)' }}>
-            reconnecting…
-          </span>
-        )}
-        <div className="spacer" />
-        <div className="presence-stack" title={others.map((p) => p.name).join(', ') || 'Just you here'}>
-          <button
-            className="avatar-btn"
-            title={`You are “${me.name}” — click to change your name`}
+        <Segmented
+          className="max-md:order-2 max-md:flex-1"
+          aria-label="View"
+          value={view}
+          onValueChange={(next) => setView(next as 'canvas' | 'board')}
+        >
+          <SegmentedItem value="canvas">Canvas</SegmentedItem>
+          <SegmentedItem value="board">Board</SegmentedItem>
+        </Segmented>
+        <div className="ml-auto flex items-center gap-3 max-md:hidden">
+          <div className="flex items-center" title={others.map((p) => p.name).join(', ') || 'Just you here'}>
+            <Button
+              variant="bare"
+              className="p-0 hover:bg-transparent"
+              title={`You are “${me.name}” — click to change your name`}
+              onClick={() => setRenaming(true)}
+            >
+              <Avatar name={me.name} kind="user" stacked />
+            </Button>
+            {others.map((p) => (
+              <Avatar
+                key={p.clientId}
+                name={p.name}
+                color={p.color}
+                kind={p.kind}
+                status={p.status}
+                owner={p.owner}
+                stacked
+              />
+            ))}
+          </div>
+          <Button variant="ghost" onClick={() => setShowActivity((v) => !v)}>
+            Activity
+          </Button>
+          <Button variant="ghost" onClick={() => setShowImport(true)} title="Import a live web page as a frame">
+            ⤓ Import
+          </Button>
+          <Button onClick={() => setShowShare(true)}>Share</Button>
+          <Button
+            variant="primary"
             onClick={() => {
-              const next = window.prompt('Your display name (shown on your cursor and in the activity feed):', me.name)
-              if (next?.trim() && next.trim() !== me.name) {
-                /* the name lives on the account now — update it there, then rejoin */
-                authClient.updateUser({ name: next.trim() }).then(() => {
-                  setName(next.trim())
-                  location.reload()
-                })
-              }
+              posthog.capture('agent_connection_opened')
+              setShowConnect(true)
             }}
           >
-            <Avatar name={me.name} color={'var(--ink)'} kind="user" />
-          </button>
-          {others.map((p) => (
-            <Avatar key={p.clientId} name={p.name} color={p.color} kind={p.kind} status={p.status} owner={p.owner} />
-          ))}
+            ✦ Connect AI
+          </Button>
         </div>
-        <button className="btn ghost" onClick={() => setShowActivity((v) => !v)}>
-          Activity
-        </button>
-        <button className="btn ghost" onClick={() => setShowImport(true)} title="Import a live web page as a frame">
-          ⤓ Import
-        </button>
-        <button className="btn" onClick={() => setShowShare(true)}>
-          Share
-        </button>
-        <button
-          className="btn primary"
-          onClick={() => {
-            posthog.capture('agent_connection_opened')
-            setShowConnect(true)
-          }}
-        >
-          ✦ Connect AI
-        </button>
+        <div className="order-3 hidden items-center gap-1.5 max-md:flex">
+          <Button variant="ghost" className="h-10 bg-surface" onClick={() => setShowActivity(true)}>
+            Activity
+          </Button>
+          <Button
+            variant="primary"
+            className="h-10"
+            onClick={() => {
+              posthog.capture('agent_connection_opened')
+              setShowConnect(true)
+            }}
+          >
+            ✦ AI
+          </Button>
+          <Tooltip label="Canvas actions" side="bottom" align="end">
+            <Button
+              variant="ghost"
+              size="icon"
+              className="size-10 bg-surface"
+              aria-label="Canvas actions"
+              onClick={() => setShowMobileActions(true)}
+            >
+              •••
+            </Button>
+          </Tooltip>
+        </div>
       </div>
 
-      <div className="stage-wrap">
+      <div className="relative flex-1 overflow-hidden">
         {view === 'board' ? (
           <Board canvasId={canvasId} />
         ) : (
           <>
             <Stage onAddFrame={addFrame} />
-            <div className={`memory-toasts${showActivity ? ' beside-panel' : ''}`}>
+            <div
+              className={cn(
+                'pointer-events-none absolute top-3 right-3 z-30 flex flex-col items-end gap-2 transition-[right] duration-150 ease-[ease] [&>*]:pointer-events-auto max-md:top-[56px] max-md:right-2 max-md:left-2',
+                /* clear of the 300px side panel at right: 12px */
+                showActivity && 'right-[324px]',
+              )}
+            >
               {pendingProposal && mutedProposal !== pendingProposal.id && !(showActivity && panelTab === 'memory') && (
-                <div className="memory-toast">
-                  <button
-                    className="memory-toast-body"
+                <div className="flex items-center rounded-[10px] border border-brand bg-white shadow-[2px_2px_0_var(--accent-ink)]">
+                  <Button
+                    variant="bare"
+                    className="py-[9px] pl-3.5 pr-1 text-[12.5px] font-bold text-accent-ink hover:bg-transparent hover:text-accent-ink"
                     onClick={() => {
                       useStore.getState().setPanelTab('memory')
                       setShowActivity(true)
                     }}
                   >
                     ✦ Memory suggestion — review
-                  </button>
-                  <button
-                    className="memory-toast-x"
+                  </Button>
+                  <Button
+                    variant="bare"
+                    className="py-[9px] pl-1.5 pr-2.5 text-[11px] hover:bg-transparent"
                     title="Hide for now"
                     onClick={() => setMutedProposal(pendingProposal.id)}
                   >
                     ✕
-                  </button>
+                  </Button>
                 </div>
               )}
               {decisionToast && (
-                <button
-                  className="memory-toast decision"
+                <Button
+                  variant="ghost"
+                  className="max-w-full items-center gap-2.5 whitespace-normal rounded-[12px] border-line bg-surface px-3.5 py-2.5 text-left shadow-pop transition-shadow hover:bg-surface hover:shadow-card sm:max-w-[320px] [&_svg]:text-accent-ink"
                   title="Open Memory"
                   onClick={() => {
                     useStore.getState().setPanelTab('memory')
@@ -285,21 +355,94 @@ export function CanvasPage({ canvasId }: { canvasId: string }) {
                 >
                   <BrainIcon size={17} />
                   <span>
-                    <b>Saved to Memory</b>
-                    <span className="mt-line">{decisionToast}</span>
+                    <b className="block font-display text-[13px] font-semibold tracking-[-0.01em]">Saved to Memory</b>
+                    <span className="mt-[1px] block text-[12px] leading-[1.4] text-ink-soft">{decisionToast}</span>
                   </span>
-                </button>
+                </Button>
               )}
             </div>
             <WorkingNow />
             <PromptBar canvasId={canvasId} />
             <Onboarding />
-            {selectedFrame && !deferPanel && <Inspector frame={selectedFrame} />}
-            {showActivity && <ActivityPanel onClose={() => setShowActivity(false)} />}
+            {!isMobile && selectedFrame && !deferPanel && <Inspector frame={selectedFrame} />}
+            {!isMobile && showActivity && <ActivityPanel onClose={() => setShowActivity(false)} />}
           </>
         )}
       </div>
 
+      {isMobile && (
+        <>
+          <Sheet open={showMobileActions} onOpenChange={setShowMobileActions}>
+            <SheetContent
+              side="bottom"
+              className="gap-0 rounded-t-2xl border-line bg-surface p-0 pb-[env(safe-area-inset-bottom)] shadow-pop"
+            >
+              <div className="border-b border-line-soft px-5 py-4 pr-14">
+                <SheetTitle className="font-display text-lg font-extrabold">Canvas actions</SheetTitle>
+                <SheetDescription className="mt-1 text-xs text-ink-soft">
+                  Import, share, or change your account settings.
+                </SheetDescription>
+              </div>
+              <div className="grid gap-2 p-4">
+                <Button
+                  variant="ghost"
+                  className="h-11 justify-start border-line bg-surface px-4"
+                  onClick={() => {
+                    setShowMobileActions(false)
+                    setShowImport(true)
+                  }}
+                >
+                  ⤓ Import website
+                </Button>
+                <Button
+                  variant="ghost"
+                  className="h-11 justify-start border-line bg-surface px-4"
+                  onClick={() => {
+                    setShowMobileActions(false)
+                    setShowShare(true)
+                  }}
+                >
+                  Share canvas
+                </Button>
+                <Button
+                  variant="ghost"
+                  className="h-11 justify-start px-4 text-ink-soft"
+                  onClick={() => navigate('/settings')}
+                >
+                  Settings
+                </Button>
+              </div>
+            </SheetContent>
+          </Sheet>
+          <Sheet
+            open={!!selectedFrame && !deferPanel}
+            onOpenChange={(open) => {
+              if (!open) select(null)
+            }}
+          >
+            <SheetContent
+              side="bottom"
+              showCloseButton={false}
+              className="max-h-[calc(100svh-56px)] gap-0 rounded-t-2xl border-line bg-surface p-0 shadow-pop data-[side=bottom]:h-[min(78svh,680px)]"
+            >
+              <SheetTitle className="sr-only">Frame inspector</SheetTitle>
+              {selectedFrame && <Inspector frame={selectedFrame} surface="inline" />}
+            </SheetContent>
+          </Sheet>
+          <Sheet open={showActivity} onOpenChange={setShowActivity}>
+            <SheetContent
+              side="bottom"
+              showCloseButton={false}
+              className="max-h-[calc(100svh-56px)] gap-0 rounded-t-2xl border-line bg-surface p-0 shadow-pop data-[side=bottom]:h-[min(78svh,680px)]"
+            >
+              <SheetTitle className="sr-only">Canvas activity</SheetTitle>
+              <ActivityPanel onClose={() => setShowActivity(false)} surface="inline" />
+            </SheetContent>
+          </Sheet>
+        </>
+      )}
+
+      {renaming && <RenameSelfModal current={me.name} onClose={() => setRenaming(false)} />}
       {showConnect && <ConnectModal canvasId={canvasId} onClose={() => setShowConnect(false)} />}
       {showShare && (
         <ShareModal
@@ -326,14 +469,12 @@ export function CanvasPage({ canvasId }: { canvasId: string }) {
         />
       )}
       {updateReady ? (
-        <div className="toast">
+        <Toast>
           doop was updated
-          <button className="toast-action" onClick={() => location.reload()}>
-            Reload
-          </button>
-        </div>
+          <ToastAction onClick={() => location.reload()}>Reload</ToastAction>
+        </Toast>
       ) : (
-        toast && <div className="toast">{toast}</div>
+        toast && <Toast>{toast}</Toast>
       )}
     </div>
   )
@@ -435,70 +576,64 @@ function ImportModal({
   const selectedCount = selected.size
 
   return (
-    <div className="modal-backdrop" onClick={() => !busy && onClose()}>
-      <div className="modal import-modal" onClick={(e) => e.stopPropagation()}>
+    <Modal size="lg" onClose={() => !busy && onClose()}>
+      <>
         {!discovery ? (
           <>
-            <div className="import-heading">
-              <span className="import-kicker">Website capture</span>
-              <h2>Import from the web</h2>
+            <div className="flex flex-col gap-[5px]">
+              <ModalEyebrow>Website capture</ModalEyebrow>
+              <ModalTitle>Import from the web</ModalTitle>
             </div>
-            <p className="lede">
+            <ModalLede>
               Bring in one page, or discover a whole site and choose the pages you want before anything is added.
-            </p>
-            <label className="import-field-label" htmlFor="import-url">
-              Website URL
-            </label>
-            <input
-              id="import-url"
-              className="import-url"
-              autoFocus
-              placeholder="https://example.com"
-              value={url}
-              disabled={!!busy}
-              onChange={(e) => {
-                setUrl(e.target.value)
-                setError(null)
-              }}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') {
-                  if (wholeSite) discover()
-                  else runSinglePage()
-                }
-                if (e.key === 'Escape' && !busy) onClose()
-              }}
-            />
-            <label className={`site-import-option${wholeSite ? ' on' : ''}`}>
-              <input
-                type="checkbox"
-                checked={wholeSite}
+            </ModalLede>
+            <Field className="mt-[22px]" label="Website URL" labelVariant="form" htmlFor="import-url">
+              <Input
+                id="import-url"
+                variant="mono"
+                inputSize="lg"
+                className="bg-paper focus:bg-white focus:shadow-[3px_3px_0_var(--line)] focus:ring-0"
+                autoFocus
+                placeholder="https://example.com"
+                value={url}
                 disabled={!!busy}
                 onChange={(e) => {
-                  setWholeSite(e.target.checked)
+                  setUrl(e.target.value)
                   setError(null)
                 }}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    if (wholeSite) discover()
+                    else runSinglePage()
+                  }
+                  if (e.key === 'Escape' && !busy) onClose()
+                }}
               />
-              <span className="site-import-check" aria-hidden="true">
-                {wholeSite ? '✓' : ''}
-              </span>
-              <span>
-                <span className="site-import-title">
-                  Import the entire website <em>Optional</em>
-                </span>
-                <span className="site-import-copy">Find public pages on the same site, then review the list.</span>
-              </span>
-            </label>
-            <p className="import-footnote">Snapshots stay editable and commentable. Scripts are removed.</p>
-            {error && <p className="import-error">{error}</p>}
-            <div className="close-row">
-              <button className="btn ghost" disabled={!!busy} onClick={onClose}>
+            </Field>
+            <CheckboxCard
+              checked={wholeSite}
+              disabled={!!busy}
+              onChange={(next) => {
+                setWholeSite(next)
+                setError(null)
+              }}
+              title={
+                <>
+                  Import the entire website{' '}
+                  <em className="ml-[7px] rounded-full bg-paper-deep px-1.5 py-[2px] font-mono text-[8.5px] font-semibold uppercase not-italic tracking-[0.08em] text-ink-faint">
+                    Optional
+                  </em>
+                </>
+              }
+              description="Find public pages on the same site, then review the list."
+            />
+            <p className={importNoteCls}>Snapshots stay editable and commentable. Scripts are removed.</p>
+            {error && <p className={errorNoteCls}>{error}</p>}
+            <ModalActions>
+              <Button variant="ghost" disabled={!!busy} onClick={onClose}>
                 Cancel
-              </button>
-              <button
-                className="btn primary"
-                disabled={!!busy || !url.trim()}
-                onClick={wholeSite ? discover : runSinglePage}
-              >
+              </Button>
+              <Button variant="primary" disabled={!!busy || !url.trim()} onClick={wholeSite ? discover : runSinglePage}>
                 {busy === 'discovering'
                   ? 'Finding pages…'
                   : busy === 'importing'
@@ -506,41 +641,57 @@ function ImportModal({
                     : wholeSite
                       ? 'Find pages →'
                       : '⤓ Import page'}
-              </button>
-            </div>
-            <SyncKeysSection canvasId={canvasId} />
+              </Button>
+            </ModalActions>
           </>
         ) : (
           <>
-            <div className="import-review-head">
-              <div>
-                <span className="import-kicker">Review before import</span>
-                <h2>Choose pages</h2>
+            <div className="flex flex-col items-start justify-between gap-2.5 sm:flex-row sm:gap-6">
+              <div className="flex flex-col gap-[5px]">
+                <ModalEyebrow>Review before import</ModalEyebrow>
+                <ModalTitle>Choose pages</ModalTitle>
               </div>
-              <span className="import-domain">{new URL(discovery.siteUrl).hostname}</span>
+              <Badge className="max-w-full overflow-hidden text-ellipsis rounded-full bg-paper px-[9px] py-[5px] text-[10.5px] sm:max-w-[240px]">
+                {new URL(discovery.siteUrl).hostname}
+              </Badge>
             </div>
-            <p className="lede">
+            <ModalLede>
               {discovery.pages.length} {discovery.pages.length === 1 ? 'page' : 'pages'} found. Everything is selected
               by default; uncheck anything you don’t need.
-            </p>
-            <div className="import-selection-bar">
-              <b>
+            </ModalLede>
+            <div className="mt-5 flex items-center justify-between px-[2px] pb-[9px]">
+              <b className="text-[12px] text-ink-soft">
                 {selectedCount} of {discovery.pages.length} selected
               </b>
-              <span>
-                <button
-                  type="button"
+              <span className="flex gap-3">
+                <Button
+                  variant="bare"
+                  size="sm"
+                  className="p-0 font-mono text-[10.5px] hover:bg-transparent hover:text-accent-ink"
                   disabled={!!busy}
                   onClick={() => setSelected(new Set(discovery.pages.map((p) => p.url)))}
                 >
                   Select all
-                </button>
-                <button type="button" disabled={!!busy} onClick={() => setSelected(new Set())}>
+                </Button>
+                <Button
+                  variant="bare"
+                  size="sm"
+                  className="p-0 font-mono text-[10.5px] hover:bg-transparent hover:text-accent-ink"
+                  disabled={!!busy}
+                  onClick={() => setSelected(new Set())}
+                >
                   Clear
-                </button>
+                </Button>
               </span>
             </div>
-            <div className={`import-page-list${busy ? ' busy' : ''}`} role="group" aria-label="Pages to import">
+            <div
+              className={cn(
+                'max-h-[calc(100dvh-390px)] overflow-y-auto rounded-[11px] border border-line bg-paper transition-opacity sm:max-h-[min(350px,calc(100vh-390px))]',
+                busy && 'opacity-[0.58]',
+              )}
+              role="group"
+              aria-label="Pages to import"
+            >
               {discovery.pages.map((page, index) => {
                 const pageUrl = new URL(page.url)
                 let pathname = pageUrl.pathname
@@ -551,35 +702,40 @@ function ImportModal({
                 }
                 const path = pathname + pageUrl.search
                 return (
-                  <label className="import-page-row" key={page.url}>
-                    <input
-                      type="checkbox"
+                  <label
+                    className="relative grid min-h-[58px] cursor-pointer grid-cols-[20px_24px_minmax(0,1fr)] items-center gap-2.5 border-b border-line bg-surface px-3 py-[9px] first:rounded-t-[10px] last:rounded-t-none last:rounded-b-[10px] last:border-b-0 hover:bg-[#fbfbfc]"
+                    key={page.url}
+                  >
+                    <Checkbox
                       checked={selected.has(page.url)}
                       disabled={!!busy}
                       onChange={() => togglePage(page.url)}
                     />
-                    <span className="import-page-check" aria-hidden="true">
-                      {selected.has(page.url) ? '✓' : ''}
-                    </span>
-                    <span className="import-page-number">{String(index + 1).padStart(2, '0')}</span>
-                    <span className="import-page-info">
-                      <b>{page.title}</b>
-                      <span>{path || '/'}</span>
+                    <span className="font-mono text-[9.5px] text-ink-faint">{String(index + 1).padStart(2, '0')}</span>
+                    <span className="min-w-0">
+                      <b className="block overflow-hidden whitespace-nowrap text-ellipsis text-[12.5px] text-ink">
+                        {page.title}
+                      </b>
+                      <span className="mt-[3px] block overflow-hidden whitespace-nowrap text-ellipsis font-mono text-[10px] text-ink-faint">
+                        {path || '/'}
+                      </span>
                     </span>
                   </label>
                 )
               })}
             </div>
             {discovery.truncated && (
-              <p className="import-limit-note">Showing the first 100 pages found. Narrow the starting URL if needed.</p>
+              <p className={importNoteCls}>Showing the first 100 pages found. Narrow the starting URL if needed.</p>
             )}
             {busy === 'importing' && (
-              <p className="import-progress">Capturing {selectedCount} pages — larger sites can take a few minutes.</p>
+              <p className={cn(importNoteCls, 'text-accent-ink')}>
+                Capturing {selectedCount} pages — larger sites can take a few minutes.
+              </p>
             )}
-            {error && <p className="import-error">{error}</p>}
-            <div className="close-row import-review-actions">
-              <button
-                className="btn ghost"
+            {error && <p className={errorNoteCls}>{error}</p>}
+            <ModalActions className="justify-between">
+              <Button
+                variant="ghost"
                 disabled={!!busy}
                 onClick={() => {
                   setDiscovery(null)
@@ -587,17 +743,62 @@ function ImportModal({
                 }}
               >
                 ← Back
-              </button>
-              <button className="btn primary" disabled={!!busy || !selectedCount} onClick={importSelected}>
+              </Button>
+              <Button variant="primary" disabled={!!busy || !selectedCount} onClick={importSelected}>
                 {busy === 'importing'
                   ? `Importing ${selectedCount}…`
                   : `⤓ Import ${selectedCount} ${selectedCount === 1 ? 'page' : 'pages'}`}
-              </button>
-            </div>
+              </Button>
+            </ModalActions>
           </>
         )}
-      </div>
-    </div>
+      </>
+    </Modal>
+  )
+}
+
+/** Your display name, the identity on your cursor and in the feed. It lives on
+ *  the account, so saving it updates the account and rejoins the canvas. */
+function RenameSelfModal({ current, onClose }: { current: string; onClose: () => void }) {
+  const [draft, setDraft] = useState(current)
+  const [busy, setBusy] = useState(false)
+  const clean = draft.trim()
+
+  function save() {
+    if (!clean || clean === current || busy) return onClose()
+    setBusy(true)
+    authClient.updateUser({ name: clean }).then(() => {
+      setName(clean)
+      location.reload()
+    })
+  }
+
+  return (
+    <Modal size="sm" onClose={onClose}>
+      <>
+        <ModalTitle>Your display name</ModalTitle>
+        <ModalLede>Shown on your cursor, in the activity feed, and on everything you leave for an agent.</ModalLede>
+        <Field className="mt-5" label="Name" labelVariant="form" htmlFor="display-name">
+          <Input
+            id="display-name"
+            autoFocus
+            value={draft}
+            maxLength={60}
+            disabled={busy}
+            onChange={(e) => setDraft(e.target.value)}
+            onKeyDown={(e) => e.key === 'Enter' && save()}
+          />
+        </Field>
+        <ModalActions>
+          <Button variant="ghost" disabled={busy} onClick={onClose}>
+            Cancel
+          </Button>
+          <Button variant="primary" disabled={busy || !clean || clean === current} onClick={save}>
+            {busy ? 'Saving…' : 'Save name'}
+          </Button>
+        </ModalActions>
+      </>
+    </Modal>
   )
 }
 
@@ -664,13 +865,19 @@ function ShareModal({ canvasId, onClose, onCopied }: { canvasId: string; onClose
   }
 
   return (
-    <div className="modal-backdrop" onClick={onClose}>
-      <div className="modal share-modal" onClick={(e) => e.stopPropagation()}>
-        <h2>Share “{canvas?.name ?? 'canvas'}”</h2>
+    <Modal size="sm" onClose={onClose}>
+      <>
+        <div className="flex items-start justify-between gap-3">
+          <ModalTitle className="min-w-0">Share “{canvas?.name ?? 'canvas'}”</ModalTitle>
+          <Button variant="ghost" size="icon" className="size-10" aria-label="Close sharing" onClick={onClose}>
+            <XIcon />
+          </Button>
+        </div>
         {isOwner && (
           <>
-            <div className="share-invite-row">
-              <input
+            <div className="mt-4 flex flex-col items-stretch gap-2 sm:flex-row">
+              <Input
+                className="flex-1 rounded-[10px] bg-paper focus:ring-0"
                 autoFocus
                 placeholder="Invite by email (doop account)"
                 value={email}
@@ -678,56 +885,66 @@ function ShareModal({ canvasId, onClose, onCopied }: { canvasId: string; onClose
                 onChange={(e) => setEmail(e.target.value)}
                 onKeyDown={(e) => e.key === 'Enter' && invite()}
               />
-              <button className="btn primary" disabled={busy || !email.trim()} onClick={invite}>
+              <Button variant="primary" className="justify-center" disabled={busy || !email.trim()} onClick={invite}>
                 Invite
-              </button>
+              </Button>
             </div>
-            {error && <p className="share-error">{error}</p>}
+            {error && <p className="mx-[2px] mt-2 text-[12px] text-accent-ink">{error}</p>}
           </>
         )}
-        <div className="share-people">
+        <div className="mt-[14px] mb-1 flex max-h-[40vh] flex-col gap-[2px] overflow-y-auto">
           {(people ?? []).map((p) => (
-            <div key={p.userId} className="share-person">
-              <span className="share-initial">{p.name.slice(0, 1).toUpperCase()}</span>
-              <span className="who">
-                <b>
+            <div key={p.userId} className="flex items-center gap-2.5 px-[2px] py-1.5">
+              <Avatar name={p.name} className="size-7 flex-none border-0 text-xs" />
+              <span className="flex min-w-0 flex-1 flex-col leading-[1.3]">
+                <b className="overflow-hidden whitespace-nowrap text-ellipsis text-[13px] font-semibold">
                   {p.name}
                   {p.userId === meId ? ' (you)' : ''}
                 </b>
-                <span>{p.email}</span>
+                <span className="overflow-hidden whitespace-nowrap text-ellipsis text-[12px] text-ink-faint">
+                  {p.email}
+                </span>
               </span>
               {p.owner ? (
-                <span className="share-owner-tag">Owner</span>
+                <span className="flex-none text-[12px] text-ink-faint">Owner</span>
               ) : isOwner || p.userId === meId ? (
-                <button
-                  className="share-remove"
+                <Button
+                  variant="bare"
+                  size="icon-sm"
+                  className="flex-none text-[13px] hover:bg-brand/10 hover:text-accent-ink"
                   title={p.userId === meId ? 'Leave this canvas' : 'Remove'}
                   onClick={() => remove(p.userId)}
                 >
                   ✕
-                </button>
+                </Button>
               ) : (
-                <span className="share-owner-tag">Can edit</span>
+                <span className="flex-none text-[12px] text-ink-faint">Can edit</span>
               )}
             </div>
           ))}
-          {people === null && <p className="share-note">Loading…</p>}
+          {people === null && <p className="text-[12px] text-ink-faint">Loading…</p>}
         </div>
-        <div className="share-link-row">
+        <div className="mt-2.5 flex flex-col items-stretch justify-between gap-2.5 border-t border-line-soft pt-3.5 sm:flex-row sm:items-center">
           {isOwner ? (
-            <label className="share-toggle" title="Off = only you and invited people can open this canvas">
-              <input type="checkbox" checked={linkEdits} onChange={(e) => toggleLink(e.target.checked)} />
+            <label
+              className="relative flex cursor-pointer items-center gap-2 text-[13px] font-medium text-ink"
+              title="Off = only you and invited people can open this canvas"
+            >
+              <Checkbox checked={linkEdits} onChange={(e) => toggleLink(e.target.checked)} />
               Anyone with the link can edit
             </label>
           ) : (
-            <span className="share-note">{linkEdits ? 'Anyone with the link can edit' : 'Invite-only canvas'}</span>
+            <span className="text-xs text-ink-faint">
+              {linkEdits ? 'Anyone with the link can edit' : 'Invite-only canvas'}
+            </span>
           )}
-          <button className="btn" onClick={copy}>
+          <Button className="justify-center" onClick={copy}>
             ⧉ Copy link
-          </button>
+          </Button>
         </div>
-      </div>
-    </div>
+        <SyncKeysSection canvasId={canvasId} />
+      </>
+    </Modal>
   )
 }
 
@@ -784,61 +1001,78 @@ function SyncKeysSection({ canvasId }: { canvasId: string }) {
 
   if (forbidden) return null
   return (
-    <div className="sync-section">
-      <h3>Or sync a live app</h3>
-      <p className="share-note">
+    <div className="mt-3.5 flex flex-col gap-2.5 border-t border-line-soft pt-3.5">
+      <h3 className="text-[13px] font-semibold text-ink">Or sync a live app</h3>
+      <Note>
         For apps a crawler can't reach — behind a login, a VPN, or on localhost. Paste one script tag and each screen
         people visit lands here as a frame, imported once. Delete a frame to re-import it fresh. The key only writes to
         this canvas.
-      </p>
+      </Note>
       {(keys ?? []).map((k) => (
-        <div key={k.id} className="sync-key">
-          <div className="sync-key-row">
-            <b>{k.name}</b>
-            <span className="share-note">
+        <div key={k.id} className="flex flex-col gap-1.5">
+          <div className="flex items-center gap-2 text-[13px]">
+            <b className="font-semibold">{k.name}</b>
+            <Note className="mr-auto">
               {k.frames ? `${k.frames} screen${k.frames === 1 ? '' : 's'}` : k.lastUsedAt ? 'synced' : 'never synced'}
-            </span>
-            <button className="share-remove" title="Revoke this key" onClick={() => revoke(k.id)}>
+            </Note>
+            <Button
+              variant="bare"
+              size="icon-sm"
+              className="-mr-1.5 text-[13px] hover:bg-brand/10 hover:text-accent-ink"
+              title="Revoke this key"
+              onClick={() => revoke(k.id)}
+            >
               ✕
-            </button>
+            </Button>
           </div>
-          <div className="sync-snippet-wrap">
-            <textarea
-              className="sync-snippet"
+          <div className="relative">
+            <Textarea
+              className="resize-none border-line-soft bg-black/[0.04] py-2 pl-2.5 pr-[84px] font-mono text-[11px] leading-normal text-ink-faint focus:border-line focus:text-ink focus:ring-0 md:text-[11px] [word-break:break-all]"
               readOnly
               rows={4}
               value={snippetFor(k.secret)}
               onFocus={(e) => e.target.select()}
             />
-            <button className="btn sync-copy" onClick={() => copySnippet(k)}>
+            <Button
+              size="sm"
+              className="absolute right-3.5 top-3 bg-surface px-2.5 text-xs"
+              onClick={() => copySnippet(k)}
+            >
               {copiedId === k.id ? 'Copied!' : '⧉ Copy'}
-            </button>
+            </Button>
           </div>
         </div>
       ))}
-      <div className="share-invite-row">
-        <input
+      <div className="mt-4 flex flex-col items-stretch gap-2 sm:flex-row">
+        <Input
+          className="flex-1 rounded-[10px] bg-paper focus:ring-0"
           placeholder="App name (e.g. Admin dashboard)"
           value={name}
           disabled={busy}
           onChange={(e) => setAppName(e.target.value)}
           onKeyDown={(e) => e.key === 'Enter' && create()}
         />
-        <button className="btn primary" disabled={busy || !name.trim()} onClick={create}>
+        <Button variant="primary" className="justify-center" disabled={busy || !name.trim()} onClick={create}>
           Create key
-        </button>
+        </Button>
       </div>
     </div>
   )
 }
 
+/* The canvas title doubles as its rename field. */
+const canvasNameCls = 'min-w-0 max-w-[240px] sm:min-w-[60px] sm:max-w-[320px]'
+
 function CanvasName() {
   const canvas = useStore((s) => s.canvas)
   const [draft, setDraft] = useState<string | null>(null)
-  if (!canvas) return <span className="canvas-name">…</span>
+  if (!canvas)
+    return <span className={cn(canvasNameCls, 'px-2 py-[5px] font-display text-[15px] font-semibold')}>…</span>
   return (
-    <input
-      className="canvas-name"
+    <Input
+      variant="title"
+      inputSize="sm"
+      className={cn(canvasNameCls, 'truncate max-md:max-w-[calc(100vw-72px)]')}
       value={draft ?? canvas.name}
       size={Math.max(6, (draft ?? canvas.name).length)}
       onFocus={() => setDraft(canvas.name)}
@@ -852,41 +1086,5 @@ function CanvasName() {
       }}
       onKeyDown={(e) => e.key === 'Enter' && (e.target as HTMLInputElement).blur()}
     />
-  )
-}
-
-function Avatar({
-  name,
-  color,
-  kind,
-  status,
-  owner,
-}: {
-  name: string
-  color: string
-  kind: 'user' | 'agent'
-  status?: string
-  owner?: string
-}) {
-  const initials = name
-    .split(/\s+/)
-    .map((w) => w[0])
-    .slice(0, 2)
-    .join('')
-    .toUpperCase()
-  /* branded agents wear their own colours — the tile and the pulse ring go brand,
-     the mark sits on top in white; everyone else keeps their presence colour */
-  const brand = kind === 'agent' ? agentBrand(name) : undefined
-  const tile = brand?.bg ?? color
-  return (
-    <div
-      className={`avatar ${kind}`}
-      style={{ background: tile, color: tile }}
-      title={`${name}${kind === 'agent' ? (owner ? ` (${owner}'s agent)` : ' (agent)') : ''}${status ? ` — ${status}` : ''}`}
-    >
-      <span style={{ color: '#fff', display: 'grid', placeItems: 'center' }}>
-        {kind === 'agent' ? <AgentIcon name={name} size={15} color={brand?.fg ?? '#fff'} /> : initials}
-      </span>
-    </div>
   )
 }

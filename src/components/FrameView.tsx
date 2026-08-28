@@ -10,10 +10,24 @@ import { FRAME_BOOTSTRAP } from '../lib/frameRuntime'
 import { recordUpdate } from '../lib/history'
 import { snapFrame } from '../lib/snap'
 import { FrameContextMenu } from './FrameContextMenu'
+import { ContextMenu, ContextMenuTrigger } from './ui/context-menu'
 import { BrainIcon } from './BrainIcon'
 import { AGENT_ROLES, DEFAULT_ROLE_ID, mentionedRole, roleName } from '../../shared/agents'
 import { posthog } from '../lib/posthog'
 import { isResidentLimit } from './TeamAllowance'
+import { cn } from '@/lib/utils'
+import { Button } from './ui/button'
+import { Textarea } from './ui/textarea'
+import { Tooltip } from './ui/tooltip'
+
+/* Counter-scale contract: chrome that keeps constant on-screen size divides
+   by the `--zoom` variable the Stage publishes (capped at 2.4× when zoomed
+   far out). Preserve these expressions exactly. */
+const COUNTER_SCALE = '[transform:scale(min(calc(1/var(--zoom,1)),2.4))]'
+const EDITOR_CHIP =
+  'inline-flex items-center gap-1 rounded-full px-[7px] py-0.5 text-[10px] font-bold text-white animate-[chip-in_0.25s_ease]'
+/* the element toolbar's buttons sit on ink and stay compact */
+const EL_TOOLBAR_BTN = 'rounded-[7px] px-2 py-1 text-xs'
 
 /** Re-render the iframe at most every `ms` — keeps streaming chunk updates smooth. */
 function useThrottledValue<T>(value: T, ms: number): T {
@@ -59,7 +73,6 @@ export const FrameView = memo(function FrameView({ frame, raster }: { frame: Fra
   const editors = Object.values(presences).filter((p) => p.activeFrameId === frame.id && p.clientId !== me)
   const [dragging, setDragging] = useState(false)
   const [editing, setEditing] = useState(false)
-  const ctxMenu = useStore((s) => (s.ctxMenu?.frameId === frame.id ? s.ctxMenu : null))
   /* after exiting edit mode, hold renders until the final serialized HTML
      lands in the store — otherwise a stale post would morph the edit away */
   const [suspendPost, setSuspendPost] = useState(false)
@@ -129,6 +142,10 @@ export const FrameView = memo(function FrameView({ frame, raster }: { frame: Fra
   /* The iframe loads a bootstrap once; HTML is posted in and DOM-morphed in
      place, so updates never white-flash the frame with a full reload. */
   const iframeRef = useRef<HTMLIFrameElement | null>(null)
+  /* where the last right-click landed, in screen coordinates: Paste drops the
+     frame there, and the menu's own box is not that point once Radix has
+     flipped or shifted it away from a viewport edge */
+  const menuAt = useRef({ x: 0, y: 0 })
   const [runtimeReady, setRuntimeReady] = useState(false)
   useEffect(() => {
     function onMsg(ev: MessageEvent) {
@@ -343,245 +360,333 @@ export const FrameView = memo(function FrameView({ frame, raster }: { frame: Fra
   }, [runtimeReady, raster])
 
   return (
-    <div
-      className={[
-        'frame',
-        selected ? 'selected' : '',
-        editing ? 'editing' : '',
-        dragging ? 'dragging' : '',
-        stream ? 'streaming' : remoteEditor ? 'remote-editing' : '',
-      ].join(' ')}
-      style={
-        {
-          left: frame.x,
-          top: frame.y,
-          width: frame.width,
-          height: frame.height,
-          '--editing-color': stream?.color ?? remoteEditor?.color ?? flash?.color,
-        } as React.CSSProperties
-      }
-      onContextMenu={(e) => {
-        e.preventDefault()
-        e.stopPropagation()
-        const alreadySelected = useStore.getState().selectedId === frame.id
-        select(frame.id)
-        closePopovers()
+    <ContextMenu
+      onOpenChange={(open) => {
+        const store = useStore.getState()
+        if (!open) return store.closeCtxMenu()
         /* deferPanel: when this right-click is what selects the frame, the
            Inspector waits until the menu closes — it must not slide in
            underneath the menu the user just opened */
-        useStore.getState().openCtxMenu({ frameId: frame.id, x: e.clientX, y: e.clientY, deferPanel: !alreadySelected })
+        const alreadySelected = store.selectedId === frame.id
+        select(frame.id)
+        closePopovers()
+        store.openCtxMenu({ frameId: frame.id, deferPanel: !alreadySelected })
       }}
     >
-      <div className="frame-label" onPointerDown={(e) => startDrag(e, 'move')}>
-        <span className="fname">{frame.name}</span>
-        <span className="editors">
-          {stream && (
-            <span className="editor-chip streaming-chip" style={{ background: stream.color }}>
-              ✦ {stream.name} is designing
-              <span className="ellipsis" />
-            </span>
+      <ContextMenuTrigger asChild>
+        <div
+          className={cn(
+            'group absolute',
+            stream &&
+              "before:pointer-events-none before:absolute before:-inset-[3px] before:rounded-[9px] before:border-2 before:border-dashed before:border-[var(--editing-color,var(--brand))] before:content-[''] before:animate-[stream-pulse_1.1s_ease-in-out_infinite]",
           )}
-          {editors
-            .filter((p) => p.name !== stream?.name)
-            .map((p) => (
-              <span key={p.clientId} className="editor-chip" style={{ background: p.color }}>
-                {p.kind === 'agent' ? '✦' : '✎'} {p.name}
-              </span>
-            ))}
-        </span>
-      </div>
-      <PinToMemory frame={frame} />
-
-      <div
-        className="frame-body"
-        onPointerDown={(e) => startDrag(e, 'move', true)}
-        onDoubleClick={() => canEdit && !editing && enterEdit()}
-        onPointerMove={(e) => {
-          if (editing || dragging || !frame.html || !runtimeReady) return
-          /* screen px → design px: the frame lives inside the zoomed stage */
-          const r = e.currentTarget.getBoundingClientRect()
-          const zoom = useStore.getState().viewport.zoom
-          sendHover((e.clientX - r.left) / zoom, (e.clientY - r.top) / zoom)
-        }}
-        onPointerLeave={clearHover}
-      >
-        <iframe
-          ref={iframeRef}
-          title={frame.name}
-          sandbox="allow-scripts"
-          srcDoc={FRAME_BOOTSTRAP}
-          style={{
-            width: frame.width * raster,
-            height: frame.height * raster,
-            transform: `scale(${1 / raster})`,
-            transformOrigin: '0 0',
+          style={
+            {
+              left: frame.x,
+              top: frame.y,
+              width: frame.width,
+              height: frame.height,
+              '--editing-color': stream?.color ?? remoteEditor?.color ?? flash?.color,
+            } as React.CSSProperties
+          }
+          /* stop the event here so the Stage's background menu — whose trigger
+         wraps this one — does not open a second menu behind ours */
+          onContextMenu={(e) => {
+            /* stop here so the Stage's background trigger, which wraps this
+               one, does not open a second menu behind ours */
+            e.stopPropagation()
+            menuAt.current = { x: e.clientX, y: e.clientY }
           }}
-        />
-        {!frame.html && <div className="frame-empty">empty frame — add HTML</div>}
-        {/* shield keeps pointer events on the canvas, not the iframe;
-            lifted while editing so clicks land in the editable document */}
-        {!editing && <div className="iframe-shield" />}
-        {hover && !editing && !dragging && (
+        >
           <div
-            className="el-hover"
-            style={{ left: hover.rect.x, top: hover.rect.y, width: hover.rect.width, height: hover.rect.height }}
+            className={cn(
+              'absolute -top-[26px] left-0 right-0 flex origin-bottom-left cursor-grab select-none items-center gap-2 whitespace-nowrap text-[12px] font-semibold text-ink-soft',
+              COUNTER_SCALE,
+            )}
+            onPointerDown={(e) => startDrag(e, 'move')}
           >
-            <span className={'el-hover-tag' + (hover.rect.y < 18 ? ' inside' : '')}>{hover.tag}</span>
+            <span className="overflow-hidden text-ellipsis">{frame.name}</span>
+            <span className="flex gap-1">
+              {stream && (
+                <span className={EDITOR_CHIP} style={{ background: stream.color }}>
+                  ✦ {stream.name} is designing
+                  <span className="after:content-['…'] after:[animation:ellipsis_1.2s_steps(4)_infinite]" />
+                </span>
+              )}
+              {editors
+                .filter((p) => p.name !== stream?.name)
+                .map((p) => (
+                  <span key={p.clientId} className={EDITOR_CHIP} style={{ background: p.color }}>
+                    {p.kind === 'agent' ? '✦' : '✎'} {p.name}
+                  </span>
+                ))}
+            </span>
           </div>
-        )}
-        {probe && selected && !editing && !dragging && (
+          <PinToMemory frame={frame} />
+
           <div
-            className="el-selected"
-            style={{ left: probe.rect.x, top: probe.rect.y, width: probe.rect.width, height: probe.rect.height }}
-          />
-        )}
-        {flash && <div className="frame-flash" style={{ '--editing-color': flash.color } as React.CSSProperties} />}
-      </div>
-
-      {editing && (
-        <div className="edit-hint" onPointerDown={(e) => e.stopPropagation()}>
-          Click any text to edit
-          <button onClick={exitEdit} title="Save and finish editing (Esc)">
-            ✓ Done
-          </button>
-        </div>
-      )}
-
-      {/* element comments: pins + element toolbar + composer, all in frame
-          coords. The toolbar anchors to the probed element normally, and to
-          the actively edited element in edit mode. */}
-      {(() => {
-        const anchor = editing ? activeHit : probe
-        return (
-          <div className="comment-layer">
-            {comments.map((c) => {
-              const pos = pinPos[c.id]
-              if (!pos) return null
-              const open = openThread === c.id
-              return (
-                <div
-                  key={c.id}
-                  className={[
-                    'comment-pin',
-                    c.failedAt ? 'failed' : c.claimedBy && !c.resolvedAt ? 'working' : '',
-                  ].join(' ')}
-                  style={{
-                    left: Math.min(Math.max(pos.x, 10), frame.width - 10),
-                    top: Math.min(Math.max(pos.y, 10), frame.height - 10),
-                    background: colorFor(c.from),
-                  }}
-                  onPointerDown={(e) => e.stopPropagation()}
-                  onClick={() => {
-                    setProbe(null)
-                    setComposing(false)
-                    setOpenThread(open ? null : c.id)
-                  }}
-                  title={`${c.from}: ${c.text}`}
-                >
-                  {c.failedAt ? '!' : c.claimedBy && !c.resolvedAt ? '✦' : '💬'}
-                  {open && (
-                    <CommentThread
-                      comment={c}
-                      onResolve={() => {
-                        api
-                          .resolveComment(c.id)
-                          .then(() => posthog.capture('element_comment_resolved'))
-                          .catch(console.error)
-                        setOpenThread(null)
-                      }}
-                      onRetry={() =>
-                        api.retryComment(c.id).catch((err) => {
-                          if (isResidentLimit(err)) useStore.getState().setLimitWall(true)
-                          else console.error(err)
-                        })
-                      }
-                    />
-                  )}
-                </div>
-              )
-            })}
-
-            {anchor && selected && (
-              <div
-                className="el-popover"
-                style={{
-                  left: Math.min(Math.max(anchor.rect.x, 4), Math.max(4, frame.width - 60)),
-                  top: Math.max(anchor.rect.y, 2),
-                }}
-                onPointerDown={(e) => e.stopPropagation()}
-              >
-                {!composing ? (
-                  <>
-                    <div className="el-toolbar">
-                      <span className="el-tag">{anchor.tag}</span>
-                      <button
-                        onClick={() => {
-                          setComposePrefill('')
-                          setComposing(true)
-                        }}
-                      >
-                        💬 Comment
-                      </button>
-                      <button
-                        onClick={() => {
-                          /* pre-mentioned → the comment dispatches as an agent
-                             job scoped to this element's selector + snippet */
-                          setComposePrefill(`@${DEFAULT_ROLE_ID} `)
-                          setComposing(true)
-                        }}
-                      >
-                        ✦ Ask AI
-                      </button>
-                      <button onClick={() => (codeView === null ? requestCode(anchor.selector) : setCodeView(null))}>
-                        {'</>'} Code
-                      </button>
-                      {!editing && canEdit && anchor.text !== '' && (
-                        <button
-                          onClick={() => {
-                            enterEdit()
-                          }}
-                        >
-                          ✎ Edit text
-                        </button>
-                      )}
-                    </div>
-                    {codeView !== null && (
-                      <div className="el-code">
-                        <button className="el-code-copy" onClick={() => navigator.clipboard.writeText(codeView)}>
-                          Copy
-                        </button>
-                        <pre>{codeView}</pre>
-                      </div>
-                    )}
-                  </>
-                ) : (
-                  <CommentComposer
-                    initialText={composePrefill}
-                    onSubmit={(text) => {
-                      api
-                        .addComment(frame.id, { selector: anchor.selector, snippet: anchor.snippet, text })
-                        .then(() => posthog.capture('element_comment_created'))
-                        .catch((err) => {
-                          /* an @mention past the free tier raises the wall */
-                          if (isResidentLimit(err)) useStore.getState().setLimitWall(true)
-                          else console.error(err)
-                        })
-                      if (editing) setComposing(false)
-                      else closePopovers()
-                    }}
-                    onCancel={() => (editing ? setComposing(false) : closePopovers())}
-                  />
-                )}
+            className={cn(
+              'absolute inset-0 cursor-grab overflow-hidden rounded-[6px] border border-line bg-white',
+              dragging ? 'shadow-pop' : 'shadow-card',
+              selected && 'outline-2 outline-offset-1 outline-brand',
+              editing && 'cursor-text outline-2 outline-offset-1 outline-dashed outline-brand',
+              !stream &&
+                remoteEditor &&
+                'outline-2 outline-offset-1 outline-solid outline-[var(--editing-color,var(--brand))]',
+              stream && 'border-transparent outline-none',
+              dragging && 'cursor-grabbing',
+            )}
+            onPointerDown={(e) => startDrag(e, 'move', true)}
+            onDoubleClick={() => canEdit && !editing && enterEdit()}
+            onPointerMove={(e) => {
+              if (editing || dragging || !frame.html || !runtimeReady) return
+              /* screen px → design px: the frame lives inside the zoomed stage */
+              const r = e.currentTarget.getBoundingClientRect()
+              const zoom = useStore.getState().viewport.zoom
+              sendHover((e.clientX - r.left) / zoom, (e.clientY - r.top) / zoom)
+            }}
+            onPointerLeave={clearHover}
+          >
+            <iframe
+              ref={iframeRef}
+              className="block border-none bg-white"
+              title={frame.name}
+              sandbox="allow-scripts"
+              srcDoc={FRAME_BOOTSTRAP}
+              style={{
+                width: frame.width * raster,
+                height: frame.height * raster,
+                transform: `scale(${1 / raster})`,
+                transformOrigin: '0 0',
+              }}
+            />
+            {!frame.html && (
+              <div className="absolute inset-0 grid place-items-center bg-[repeating-linear-gradient(45deg,transparent_0_10px,rgba(28,26,21,0.025)_10px_20px)] text-[13px] text-ink-faint">
+                empty frame — add HTML
               </div>
             )}
+            {/* shield keeps pointer events on the canvas, not the iframe;
+            lifted while editing so clicks land in the editable document */}
+            {!editing && <div className="absolute inset-0" />}
+            {hover && !editing && !dragging && (
+              <div
+                className="pointer-events-none absolute z-[3] bg-[rgba(60,130,246,0.06)] shadow-[inset_0_0_0_calc(1.5px/var(--zoom,1))_#3c82f6]"
+                style={{ left: hover.rect.x, top: hover.rect.y, width: hover.rect.width, height: hover.rect.height }}
+              >
+                <span
+                  className={cn(
+                    'absolute top-0 left-0 whitespace-nowrap bg-[#3c82f6] px-1.5 py-[3px] text-[10px] font-bold leading-none text-white [font-family:ui-monospace,monospace]',
+                    hover.rect.y < 18
+                      ? 'origin-top-left rounded-[0_0_4px_0] [transform:translateY(0)_scale(min(calc(1/var(--zoom,1)),2.4))]'
+                      : 'origin-bottom-left rounded-[4px_4px_4px_0] [transform:translateY(-100%)_scale(min(calc(1/var(--zoom,1)),2.4))]',
+                  )}
+                >
+                  {hover.tag}
+                </span>
+              </div>
+            )}
+            {probe && selected && !editing && !dragging && (
+              <div
+                className="pointer-events-none absolute z-[3] shadow-[inset_0_0_0_calc(1.5px/var(--zoom,1))_#3c82f6,0_0_0_calc(1.5px/var(--zoom,1))_rgba(60,130,246,0.35)]"
+                style={{ left: probe.rect.x, top: probe.rect.y, width: probe.rect.width, height: probe.rect.height }}
+              />
+            )}
+            {flash && (
+              <div
+                className="pointer-events-none absolute -inset-px rounded-[6px] animate-[frame-flash_1.2s_ease-out_forwards]"
+                style={{ '--editing-color': flash.color } as React.CSSProperties}
+              />
+            )}
           </div>
-        )
-      })()}
 
-      <div className="resize-handle" onPointerDown={(e) => startDrag(e, 'resize')} />
+          {editing && (
+            <div
+              className={cn(
+                'absolute top-[calc(100%_+_10px)] left-0 flex origin-top-left items-center gap-[9px] whitespace-nowrap rounded-full bg-ink py-1 pr-[5px] pl-3 text-[11px] font-semibold text-white shadow-card animate-[chip-in_0.25s_ease]',
+                COUNTER_SCALE,
+              )}
+              onPointerDown={(e) => e.stopPropagation()}
+            >
+              Click any text to edit
+              <Button
+                variant="primary"
+                size="pill"
+                className="border-transparent px-2.5 shadow-none hover:translate-x-0 hover:translate-y-0 hover:brightness-110 hover:shadow-none"
+                onClick={exitEdit}
+                title="Save and finish editing (Esc)"
+              >
+                ✓ Done
+              </Button>
+            </div>
+          )}
 
-      {ctxMenu && <FrameContextMenu frame={frame} at={ctxMenu} onClose={() => useStore.getState().closeCtxMenu()} />}
-    </div>
+          {/* element comments: pins + element toolbar + composer, all in frame
+          coords. The toolbar anchors to the probed element normally, and to
+          the actively edited element in edit mode. */}
+          {(() => {
+            const anchor = editing ? activeHit : probe
+            return (
+              <div className="pointer-events-none absolute inset-0">
+                {comments.map((c) => {
+                  const pos = pinPos[c.id]
+                  if (!pos) return null
+                  const open = openThread === c.id
+                  return (
+                    <div
+                      key={c.id}
+                      className={cn(
+                        'pointer-events-auto absolute z-[4] grid h-[26px] w-[26px] cursor-pointer place-items-center rounded-[50%_50%_50%_4px] border-2 border-white text-[13px] text-white [transform:translate(-50%,-50%)_scale(min(calc(1/var(--zoom,1)),2.4))] animate-[chip-in_0.25s_ease]',
+                        c.failedAt
+                          ? 'bg-accent-ink! font-extrabold shadow-[0_0_0_3px_rgba(229,83,60,0.2),var(--shadow-card)]'
+                          : 'shadow-card',
+                        !c.failedAt &&
+                          c.claimedBy &&
+                          !c.resolvedAt &&
+                          "after:absolute after:-inset-1.5 after:rounded-[inherit] after:border-2 after:border-current after:opacity-50 after:content-[''] after:[animation:stream-pulse_1.1s_ease-in-out_infinite]",
+                      )}
+                      style={{
+                        left: Math.min(Math.max(pos.x, 10), frame.width - 10),
+                        top: Math.min(Math.max(pos.y, 10), frame.height - 10),
+                        background: colorFor(c.from),
+                      }}
+                      onPointerDown={(e) => e.stopPropagation()}
+                      onClick={() => {
+                        setProbe(null)
+                        setComposing(false)
+                        setOpenThread(open ? null : c.id)
+                      }}
+                      title={`${c.from}: ${c.text}`}
+                    >
+                      {c.failedAt ? '!' : c.claimedBy && !c.resolvedAt ? '✦' : '💬'}
+                      {open && (
+                        <CommentThread
+                          comment={c}
+                          onResolve={() => {
+                            api
+                              .resolveComment(c.id)
+                              .then(() => posthog.capture('element_comment_resolved'))
+                              .catch(console.error)
+                            setOpenThread(null)
+                          }}
+                          onRetry={() =>
+                            api.retryComment(c.id).catch((err) => {
+                              if (isResidentLimit(err)) useStore.getState().setLimitWall(true)
+                              else console.error(err)
+                            })
+                          }
+                        />
+                      )}
+                    </div>
+                  )
+                })}
+
+                {anchor && selected && (
+                  <div
+                    className="pointer-events-auto absolute z-[5] origin-top-left [transform:scale(min(calc(1/var(--zoom,1)),2.4))_translateY(calc(-100%_-_8px))]"
+                    style={{
+                      left: Math.min(Math.max(anchor.rect.x, 4), Math.max(4, frame.width - 60)),
+                      top: Math.max(anchor.rect.y, 2),
+                    }}
+                    onPointerDown={(e) => e.stopPropagation()}
+                  >
+                    {!composing ? (
+                      <>
+                        <div className="flex items-center gap-1.5 whitespace-nowrap rounded-[10px] bg-ink px-[7px] py-[5px] shadow-pop animate-[chip-in_0.18s_ease]">
+                          <span className="px-[3px] text-[11px] font-bold text-brand [font-family:ui-monospace,monospace]">
+                            {anchor.tag}
+                          </span>
+                          <Button
+                            variant="inverse"
+                            className={EL_TOOLBAR_BTN}
+                            onClick={() => {
+                              setComposePrefill('')
+                              setComposing(true)
+                            }}
+                          >
+                            💬 Comment
+                          </Button>
+                          <Button
+                            variant="inverse"
+                            className={EL_TOOLBAR_BTN}
+                            onClick={() => {
+                              /* pre-mentioned → the comment dispatches as an agent
+                             job scoped to this element's selector + snippet */
+                              setComposePrefill(`@${DEFAULT_ROLE_ID} `)
+                              setComposing(true)
+                            }}
+                          >
+                            ✦ Ask AI
+                          </Button>
+                          <Button
+                            variant="inverse"
+                            className={EL_TOOLBAR_BTN}
+                            onClick={() => (codeView === null ? requestCode(anchor.selector) : setCodeView(null))}
+                          >
+                            {'</>'} Code
+                          </Button>
+                          {!editing && canEdit && anchor.text !== '' && (
+                            <Button
+                              variant="inverse"
+                              className={EL_TOOLBAR_BTN}
+                              onClick={() => {
+                                enterEdit()
+                              }}
+                            >
+                              ✎ Edit text
+                            </Button>
+                          )}
+                        </div>
+                        {codeView !== null && (
+                          <div className="relative mt-1.5 w-[440px] max-w-[80vw] rounded-[10px] bg-ink px-3 py-2.5 shadow-pop animate-[chip-in_0.18s_ease]">
+                            <Button
+                              variant="inverse"
+                              size="sm"
+                              className="absolute right-2 top-[7px] rounded-md bg-white/[0.12] px-[9px] py-[3px] text-[11px] hover:bg-white/[0.22]"
+                              onClick={() => navigator.clipboard.writeText(codeView)}
+                            >
+                              Copy
+                            </Button>
+                            <pre className="max-h-[260px] overflow-auto whitespace-pre-wrap text-[11px] leading-[1.55] text-[#d9e2ec] [font-family:ui-monospace,monospace] [word-break:break-word]">
+                              {codeView}
+                            </pre>
+                          </div>
+                        )}
+                      </>
+                    ) : (
+                      <CommentComposer
+                        initialText={composePrefill}
+                        onSubmit={(text) => {
+                          api
+                            .addComment(frame.id, { selector: anchor.selector, snippet: anchor.snippet, text })
+                            .then(() => posthog.capture('element_comment_created'))
+                            .catch((err) => {
+                              /* an @mention past the free tier raises the wall */
+                              if (isResidentLimit(err)) useStore.getState().setLimitWall(true)
+                              else console.error(err)
+                            })
+                          if (editing) setComposing(false)
+                          else closePopovers()
+                        }}
+                        onCancel={() => (editing ? setComposing(false) : closePopovers())}
+                      />
+                    )}
+                  </div>
+                )}
+              </div>
+            )
+          })()}
+
+          <div
+            className={cn(
+              'absolute -right-[7px] -bottom-[7px] h-3.5 w-3.5 cursor-nwse-resize rounded-[4px] border-[1.5px] border-ink bg-surface opacity-0 [transition:opacity_0.12s] group-hover:opacity-100',
+              selected && 'opacity-100',
+            )}
+            onPointerDown={(e) => startDrag(e, 'resize')}
+          />
+        </div>
+      </ContextMenuTrigger>
+      <FrameContextMenu frame={frame} at={menuAt} />
+    </ContextMenu>
   )
 })
 
@@ -590,21 +695,24 @@ export const FrameView = memo(function FrameView({ frame, raster }: { frame: Fra
 function PinToMemory({ frame }: { frame: Frame }) {
   const [state, setState] = useState<'idle' | 'pinned' | 'error'>('idle')
   return (
-    <button
-      className="frame-pin"
-      data-tip="Add to design memory — will be used as reference"
-      onPointerDown={(e) => e.stopPropagation()}
-      onClick={(e) => {
-        e.stopPropagation()
-        api
-          .pinReference(frame.canvasId, frame.id)
-          .then(() => setState('pinned'))
-          .catch(() => setState('error')) // already pinned or at the cap
-        window.setTimeout(() => setState('idle'), 1600)
-      }}
-    >
-      {state === 'pinned' ? '✓ in Memory' : state === 'error' ? 'already pinned' : <BrainIcon />}
-    </button>
+    <Tooltip label="Add to design memory — will be used as reference" side="top" align="end">
+      <Button
+        variant="ghost"
+        size="sm"
+        className="absolute -top-[27px] right-0 z-[6] hidden origin-bottom-right whitespace-nowrap rounded-lg bg-white px-[5px] py-[3px] text-[11px] leading-none text-ink-soft shadow-[0_1px_2px_rgba(0,0,0,0.07)] [transform:scale(min(calc(1/var(--zoom,1)),2.4))] hover:border-brand hover:bg-white hover:text-accent-ink sm:inline-flex"
+        onPointerDown={(e) => e.stopPropagation()}
+        onClick={(e) => {
+          e.stopPropagation()
+          api
+            .pinReference(frame.canvasId, frame.id)
+            .then(() => setState('pinned'))
+            .catch(() => setState('error')) // already pinned or at the cap
+          window.setTimeout(() => setState('idle'), 1600)
+        }}
+      >
+        {state === 'pinned' ? '✓ in Memory' : state === 'error' ? 'already pinned' : <BrainIcon />}
+      </Button>
+    </Tooltip>
   )
 }
 
@@ -625,9 +733,11 @@ function CommentComposer({
      comment is a note for the humans in the room */
   const mentioned = mentionedRole(text)
   return (
-    <div className="comment-composer">
-      <textarea
+    <div className="w-[240px] rounded-[10px] border border-line bg-surface p-2 shadow-pop animate-[chip-in_0.18s_ease]">
+      <Textarea
         ref={taRef}
+        variant="bare"
+        className="min-h-[58px] md:text-[13px]"
         value={text}
         placeholder="Leave a comment on this element…"
         onChange={(e) => setText(e.target.value)}
@@ -637,28 +747,30 @@ function CommentComposer({
         }}
       />
       {!mentioned && (
-        <div className="mention-row">
+        <div className="mb-2 flex flex-wrap gap-1">
           {AGENT_ROLES.map((role) => (
-            <button
+            <Button
               key={role.id}
-              className="tag-doop"
+              variant="ghost"
+              size="pill"
+              className="border-dashed px-2 text-[11px] font-semibold text-ink-soft hover:border-brand hover:bg-transparent hover:text-brand"
               title={`${role.name} — ${role.blurb}`}
               onClick={() => setText((t) => (t ? t.replace(/\s*$/, ' ') : '') + `@${role.id} `)}
             >
               {role.emoji} @{role.id}
-            </button>
+            </Button>
           ))}
         </div>
       )}
-      <div className="composer-row">
+      <div className="flex items-center justify-end gap-2">
         {mentioned && (
-          <span className="doop-note">
+          <span className="mr-auto text-[11px] font-semibold text-brand">
             {mentioned.emoji} {mentioned.name} will pick this up
           </span>
         )}
-        <button className="post" disabled={!text.trim()} onClick={send}>
+        <Button variant="solid" size="pill" className="px-3.5 py-[5px] text-xs" disabled={!text.trim()} onClick={send}>
           Post
-        </button>
+        </Button>
       </div>
     </div>
   )
@@ -682,24 +794,34 @@ function CommentThread({
         ? `✦ waiting for ${target}`
         : null
   return (
-    <div className="comment-thread" onClick={(e) => e.stopPropagation()}>
-      <div className="thread-head">
+    <div
+      className="absolute top-[calc(100%_+_8px)] left-1/2 w-[230px] -translate-x-1/2 cursor-default rounded-[10px] border border-line bg-surface p-2.5 text-left shadow-pop animate-[chip-in_0.18s_ease]"
+      onClick={(e) => e.stopPropagation()}
+    >
+      <div className="flex items-center justify-between gap-2 text-[12px]">
         <b style={{ color: colorFor(comment.from) }}>{comment.from}</b>
-        {status && <span className="thread-status">{status}</span>}
+        {status && <span className="whitespace-nowrap text-[11px] font-semibold text-brand">{status}</span>}
       </div>
-      <div className="thread-text">{comment.text}</div>
+      <div className="mt-1.5 mb-2 break-words text-[13px] leading-[1.45] text-ink">{comment.text}</div>
       {comment.failedAt ? (
-        <div className="thread-failure">{comment.failureReason ?? 'The agent did not finish.'}</div>
+        <div className="-mt-0.5 mb-2 text-[11px] leading-[1.4] text-accent-ink">
+          {comment.failureReason ?? 'The agent did not finish.'}
+        </div>
       ) : null}
-      <div className="thread-actions">
+      <div className="flex items-center gap-1.5">
         {comment.failedAt ? (
-          <button className="retry-action" onClick={onRetry}>
+          <Button variant="danger-solid" size="pill" className="px-[11px] py-[5px]" onClick={onRetry}>
             ↻ Retry
-          </button>
+          </Button>
         ) : null}
-        <button className="resolve" onClick={onResolve}>
+        <Button
+          variant="ghost"
+          size="pill"
+          className="px-2.5 text-ink-soft hover:border-ink-soft hover:bg-transparent hover:text-ink"
+          onClick={onResolve}
+        >
           ✓ Resolve
-        </button>
+        </Button>
       </div>
     </div>
   )

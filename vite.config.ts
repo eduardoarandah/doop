@@ -1,5 +1,7 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
+import tailwindcss from '@tailwindcss/vite'
+import { fileURLToPath } from 'node:url'
 
 /* Dev ports. The defaults are the only ones anyone normally needs; the env
    overrides exist so a second worktree can run its own pair without fighting
@@ -10,7 +12,12 @@ const webPort = Number(process.env.VITE_PORT || 4300)
 const api = `http://localhost:${apiPort}`
 
 export default defineConfig({
-  plugins: [react()],
+  plugins: [react(), tailwindcss()],
+  resolve: {
+    alias: {
+      '@': fileURLToPath(new URL('./src', import.meta.url)),
+    },
+  },
   server: {
     port: webPort,
     /* the doop-sync snippet posts to /ingest from foreign origins; vite

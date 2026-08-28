@@ -5,6 +5,10 @@ import { posthog } from '../lib/posthog'
 import { useStore } from '../lib/store'
 import { navigate } from '../App'
 import { ConnectBody, AgentArrival } from './ConnectModal'
+import { Button } from './ui/button'
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from './ui/collapsible'
+import { Modal, ModalActions, ModalLede, ModalTitle } from './ui/modal'
+import { cn } from '@/lib/utils'
 
 /**
  * Free-tier metering UI for the resident team: the shared allowance hook,
@@ -37,7 +41,7 @@ export function MeterLine({ allowance }: { allowance: Allowance | null }) {
      and say it even where there is no free tier to count (limit 0) */
   if (allowance.byoModel) {
     return (
-      <span className="meter-line byo">
+      <span className="text-[12px] text-[#1e7a4c]">
         Doop Agent on your {allowance.byoKind === 'openai-key' ? 'OpenAI key' : 'ChatGPT'}
       </span>
     )
@@ -45,7 +49,7 @@ export function MeterLine({ allowance }: { allowance: Allowance | null }) {
   if (allowance.limit <= 0) return null
   const left = Math.max(0, allowance.limit - allowance.used)
   return (
-    <span className={`meter-line${left === 0 ? ' out' : ''}`}>
+    <span className={cn('text-[12px]', left === 0 ? 'text-accent-ink' : 'text-ink-faint')}>
       {left === 0
         ? 'free Doop Agent tasks used up — connect ChatGPT to continue'
         : `${left} of ${allowance.limit} free Doop Agent task${allowance.limit === 1 ? '' : 's'} left`}
@@ -59,18 +63,18 @@ export function LimitWall({ canvasId, onClose }: { canvasId: string; onClose: ()
     posthog.capture('resident_limit_hit')
   }, [])
   return (
-    <div className="modal-backdrop" onClick={onClose}>
-      <div className="modal" onClick={(e) => e.stopPropagation()}>
-        <h2>Your free Doop Agent tasks are used up</h2>
-        <p className="lede">
+    <Modal size="lg" onClose={onClose}>
+      <>
+        <ModalTitle>Your free Doop Agent tasks are used up</ModalTitle>
+        <ModalLede>
           Those were on the house. Connect your <b>ChatGPT subscription</b> and the Doop Agent keeps working exactly as
           it does now — same canvas, same agent, running on your plan instead of ours.
-        </p>
+        </ModalLede>
         {/* the connection itself is an account setting, so this hands off to
             Settings rather than carrying a second copy of the panel */}
-        <div className="close-row start">
-          <button
-            className="btn primary"
+        <ModalActions className="justify-start">
+          <Button
+            variant="primary"
             onClick={() => {
               posthog.capture('resident_limit_connect_clicked')
               /* carry the canvas so Settings can send them straight back */
@@ -78,27 +82,25 @@ export function LimitWall({ canvasId, onClose }: { canvasId: string; onClose: ()
             }}
           >
             Connect your subscription
-          </button>
-        </div>
+          </Button>
+        </ModalActions>
 
-        <button className="ma-toggle" onClick={() => setShowMcp((v) => !v)}>
-          {showMcp ? '− ' : '+ '}Or drive the canvas from your own agent (Claude Code, Codex)
-        </button>
-        {showMcp && (
-          <>
+        <Collapsible open={showMcp} onOpenChange={setShowMcp}>
+          <CollapsibleTrigger className="mt-4 text-[12.5px] text-ink-faint hover:text-ink">
+            Or drive the canvas from your own agent (Claude Code, Codex)
+          </CollapsibleTrigger>
+          <CollapsibleContent>
             <ConnectBody canvasId={canvasId} />
-            <div className="close-row">
+            <ModalActions>
               <AgentArrival />
-            </div>
-          </>
-        )}
+            </ModalActions>
+          </CollapsibleContent>
+        </Collapsible>
 
-        <div className="close-row">
-          <button className="btn" onClick={onClose}>
-            Close
-          </button>
-        </div>
-      </div>
-    </div>
+        <ModalActions>
+          <Button onClick={onClose}>Close</Button>
+        </ModalActions>
+      </>
+    </Modal>
   )
 }

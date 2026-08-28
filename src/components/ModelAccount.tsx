@@ -2,7 +2,12 @@ import { useCallback, useEffect, useState } from 'react'
 import { api } from '../lib/api'
 import type { DeviceFlow, ModelAccountStatus } from '../lib/api'
 import { posthog } from '../lib/posthog'
-import { CodeBlock } from './ConnectModal'
+import { CodeBlock } from './ui/code-block'
+import { Button } from './ui/button'
+import { Input } from './ui/input'
+import { Dot } from './ui/dot'
+import { ToggleChip, ToggleChipGroup, ToggleChipItem } from './ui/toggle-chip'
+import { cn } from '@/lib/utils'
 
 /**
  * "Keep the Doop Agent running on my own subscription."
@@ -63,6 +68,41 @@ function planName(plan: string): string {
       .join(' ')
   )
 }
+
+/* provider rows: one per model plan, divided rather than boxed — the set-card
+   is the container. The connected one carries a green left-edge tint. */
+const planRow = (live: boolean) =>
+  cn(
+    'flex gap-[14px] border-b border-line-soft px-[22px] py-[18px] last:border-b-0 max-md:gap-3 max-md:px-4 max-md:py-[17px]',
+    live && 'bg-[linear-gradient(90deg,rgba(63,156,82,0.05),transparent_40%)]',
+  )
+const planMark = (live: boolean) =>
+  cn(
+    'grid h-9 w-9 flex-none place-items-center rounded-[11px] border border-line bg-paper-deep text-ink',
+    live && 'border-black bg-black text-white',
+  )
+const planPill = (on: boolean) =>
+  cn(
+    'rounded-full bg-paper-deep px-[9px] py-[3px] text-[11.5px] font-bold text-ink-faint',
+    on && 'bg-[rgba(30,122,76,0.12)] text-[#1a6b43]',
+  )
+/* the model tiers as chips — the base .chip recipe reshaped into the picker */
+const planAsCode =
+  'inline-block rounded-[7px] bg-paper-deep px-[9px] py-[3px] font-mono text-[12.5px] leading-[1.5] text-ink [overflow-wrap:anywhere]'
+/* chips left, the row's action right, sharing one line */
+const actionsRow =
+  'mt-[18px] flex flex-wrap items-center justify-between gap-5 max-md:flex-col max-md:items-stretch max-md:gap-[10px]'
+const planFlow = 'mt-[14px]'
+const maSteps =
+  'mb-3 ml-[18px] mt-[10px] text-[13px] leading-[1.7] text-ink-soft [&_code]:font-mono [&_code]:text-[12px]'
+const maWaiting = 'mt-[10px] flex items-center gap-[9px] text-[13px] text-ink-soft'
+const maActions = 'mt-3 flex items-center gap-[10px] max-md:flex-col max-md:items-stretch'
+/* the "or paste the redirect instead" style link under a flow */
+const maToggle = 'mt-4 block px-0 py-0 text-left text-[12.5px] font-normal text-ink-faint hover:bg-transparent'
+/* the paste-your-redirect field: ink-bordered so it reads as the live step */
+const maInput = 'rounded-[10px] border-ink px-3 py-[10px] font-mono focus:ring-0 md:text-xs'
+/* buttons in the responsive action rows centre their label once stacked */
+const rowBtn = 'max-md:justify-center'
 
 export function ModelAccountPanel({ onChange }: { onChange?: () => void }) {
   const { account, refresh, set } = useModelAccount()
@@ -234,55 +274,57 @@ export function ModelAccountPanel({ onChange }: { onChange?: () => void }) {
 
   /* On the connected row the chips ARE the model picker; on any other row they
      only advertise what that plan can run, so they stay inert. */
-  const modelChips = (live: boolean) => (
-    <div className="plan-chips">
-      {options.map((m) =>
-        live ? (
-          <button
-            key={m.id}
-            className={`chip${m.id === account.model ? ' on' : ''}`}
-            disabled={busy}
-            onClick={() => pickModel(m.id)}
-            title={m.blurb}
-          >
+  const modelChips = (live: boolean) =>
+    live ? (
+      <ToggleChipGroup aria-label="Model" value={account.model ?? ''} onValueChange={pickModel} disabled={busy}>
+        {options.map((m) => (
+          <ToggleChipItem key={m.id} value={m.id} title={m.blurb}>
             {m.id === account.model && <Tick />}
             {m.name}
-          </button>
-        ) : (
-          <span key={m.id} className="chip idle">
+          </ToggleChipItem>
+        ))}
+        {/* a server override outside the known tiers still has to be visible */}
+        {account.model && !chosen && <ToggleChip state="on">{account.model}</ToggleChip>}
+      </ToggleChipGroup>
+    ) : (
+      /* inert on a row that is not the connected one — a capability list, not a control */
+      <div className="flex flex-wrap gap-[9px]">
+        {options.map((m) => (
+          <ToggleChip key={m.id} state="idle">
             {m.name}
-          </span>
-        ),
-      )}
-      {/* a server override outside the known tiers still has to be visible */}
-      {live && account.model && !chosen && <span className="chip on">{account.model}</span>}
-    </div>
-  )
+          </ToggleChip>
+        ))}
+      </div>
+    )
 
   return (
-    <div className="plan-rows">
+    <div className="flex flex-col">
       {account.chatgptEnabled !== false && (
-        <section className={`plan-row${onChatgpt ? ' live' : ''}`}>
-          <span className="plan-mark">
+        <section className={planRow(onChatgpt)}>
+          <span className={planMark(onChatgpt)}>
             <OpenAiMark />
           </span>
-          <div className="plan-body">
-            <div className="plan-head">
-              <h3>Codex Plan</h3>
-              <span className={`plan-pill${onChatgpt ? ' on' : ''}`}>{onChatgpt ? 'Connected' : 'Not connected'}</span>
+          <div className="min-w-0 flex-1">
+            <div className="flex items-center gap-[10px] max-md:flex-wrap max-md:items-start max-md:gap-x-[9px] max-md:gap-y-[6px]">
+              <h3 className="font-display text-[18px] font-extrabold normal-case tracking-[-0.02em] text-ink max-md:text-[17px]">
+                Codex Plan
+              </h3>
+              <span className={planPill(onChatgpt)}>{onChatgpt ? 'Connected' : 'Not connected'}</span>
             </div>
-            <p className="plan-desc">Route OpenAI models through your ChatGPT subscription</p>
+            <p className="mt-1.5 text-[14px] leading-[1.55] text-ink-soft max-md:text-[13.5px]">
+              Route OpenAI models through your ChatGPT subscription
+            </p>
             {onChatgpt && account.email && (
-              <dl className="plan-as">
+              <dl className="mt-[14px] grid grid-cols-[auto_auto] items-center justify-start gap-x-[14px] gap-y-2 text-[13px] text-ink-soft max-md:grid-cols-1 max-md:gap-[3px]">
                 <dt>Connected as</dt>
-                <dd>
-                  <code>{account.email}</code>
+                <dd className="min-w-0">
+                  <code className={planAsCode}>{account.email}</code>
                 </dd>
                 {account.plan && (
                   <>
-                    <dt>Plan</dt>
-                    <dd>
-                      <code>{planName(account.plan)}</code>
+                    <dt className="max-md:mt-2">Plan</dt>
+                    <dd className="min-w-0">
+                      <code className={planAsCode}>{planName(account.plan)}</code>
                     </dd>
                   </>
                 )}
@@ -291,17 +333,17 @@ export function ModelAccountPanel({ onChange }: { onChange?: () => void }) {
 
             {onChatgpt ? (
               <>
-                <div className="plan-actions-row">
+                <div className={actionsRow}>
                   {modelChips(true)}
-                  <button className="btn danger" onClick={remove} disabled={busy}>
+                  <Button variant="danger" className={rowBtn} onClick={remove} disabled={busy}>
                     Disconnect
-                  </button>
+                  </Button>
                 </div>
-                {chosen && <p className="plan-note">{chosen.blurb}</p>}
+                {chosen && <p className="mt-[10px] text-[13px] text-ink-faint">{chosen.blurb}</p>}
               </>
             ) : device ? (
-              <div className="plan-flow">
-                <ol className="ma-steps">
+              <div className={planFlow}>
+                <ol className={maSteps}>
                   <li>
                     One-time setup: turn on <b>device code authorization</b> in ChatGPT → Settings → Security. (On a
                     workspace account an admin has to allow it.)
@@ -315,101 +357,119 @@ export function ModelAccountPanel({ onChange }: { onChange?: () => void }) {
                   </li>
                 </ol>
                 <CodeBlock text={device.userCode} />
-                <p className="ma-waiting">
-                  <span className="arrival-dot" /> Waiting for approval…
+                <p className={maWaiting}>
+                  <Dot className="animate-[arrival-pulse_1.6s_ease-in-out_infinite] bg-brand" /> Waiting for approval…
                 </p>
-                <div className="ma-actions">
-                  <a className="btn primary" href={device.verificationUrl} target="_blank" rel="noreferrer noopener">
-                    Open verification page
-                  </a>
-                  <button className="btn ghost" onClick={cancelDevice}>
+                <div className={maActions}>
+                  <Button asChild variant="primary" className={rowBtn}>
+                    <a href={device.verificationUrl} target="_blank" rel="noreferrer noopener">
+                      Open verification page
+                    </a>
+                  </Button>
+                  <Button variant="ghost" className={rowBtn} onClick={cancelDevice}>
                     Cancel
-                  </button>
+                  </Button>
                 </div>
-                <button className="ma-toggle" onClick={usePasteFlow} disabled={busy}>
+                <Button variant="bare" size="sm" className={maToggle} onClick={usePasteFlow} disabled={busy}>
                   Device codes not available on your account? Use the browser sign-in instead
-                </button>
+                </Button>
               </div>
             ) : waiting ? (
-              <div className="plan-flow">
+              <div className={planFlow}>
                 {/* Doop holds the loopback port itself, so approving is the
                     whole job — this row flips on its own. */}
-                <p className="ma-waiting">
-                  <span className="arrival-dot" /> Waiting for you to approve it in the other tab…
+                <p className={maWaiting}>
+                  <Dot className="animate-[arrival-pulse_1.6s_ease-in-out_infinite] bg-brand" /> Waiting for you to
+                  approve it in the other tab…
                 </p>
-                <div className="ma-actions">
-                  <a className="btn ghost" href={authUrl} target="_blank" rel="noreferrer noopener">
-                    Reopen sign-in
-                  </a>
-                  <button className="ma-toggle inline" onClick={() => setWaiting(false)}>
+                <div className={maActions}>
+                  <Button asChild variant="ghost" className={rowBtn}>
+                    <a href={authUrl} target="_blank" rel="noreferrer noopener">
+                      Reopen sign-in
+                    </a>
+                  </Button>
+                  <Button
+                    variant="bare"
+                    size="sm"
+                    className={cn(maToggle, 'mt-0 underline')}
+                    onClick={() => setWaiting(false)}
+                  >
                     Paste the redirect URL instead
-                  </button>
+                  </Button>
                 </div>
               </div>
             ) : authUrl ? (
-              <div className="plan-flow">
-                <ol className="ma-steps">
+              <div className={planFlow}>
+                <ol className={maSteps}>
                   <li>Approve the connection in the tab that just opened.</li>
                   <li>
                     You will land on a <code>localhost:1455</code> page that <b>fails to load</b> — that is expected.
                   </li>
                   <li>Copy that page's full address and paste it below.</li>
                 </ol>
-                <input
-                  className="ma-input"
+                <Input
+                  className={maInput}
                   value={redirect}
                   onChange={(e) => setRedirect(e.target.value)}
                   placeholder="http://localhost:1455/auth/callback?code=…"
                   autoFocus
                   spellCheck={false}
                 />
-                <div className="ma-actions">
-                  <button className="btn primary" onClick={finish} disabled={busy || !redirect.trim()}>
+                <div className={maActions}>
+                  <Button variant="primary" className={rowBtn} onClick={finish} disabled={busy || !redirect.trim()}>
                     {busy ? 'Connecting…' : 'Finish connecting'}
-                  </button>
-                  <a className="btn ghost" href={authUrl} target="_blank" rel="noreferrer noopener">
-                    Reopen sign-in
-                  </a>
+                  </Button>
+                  <Button asChild variant="ghost" className={rowBtn}>
+                    <a href={authUrl} target="_blank" rel="noreferrer noopener">
+                      Reopen sign-in
+                    </a>
+                  </Button>
                 </div>
               </div>
             ) : (
-              <div className="plan-actions-row">
+              <div className={actionsRow}>
                 {modelChips(false)}
-                <button className="btn" onClick={start} disabled={busy}>
+                <Button className={rowBtn} onClick={start} disabled={busy}>
                   {busy ? 'Opening…' : replaces ? 'Use instead' : 'Connect'}
-                </button>
+                </Button>
               </div>
             )}
           </div>
         </section>
       )}
 
-      <section className={`plan-row${onKey ? ' live' : ''}`}>
-        <span className="plan-mark">
+      <section className={planRow(onKey)}>
+        <span className={planMark(onKey)}>
           <OpenAiMark />
         </span>
-        <div className="plan-body">
-          <div className="plan-head">
-            <h3>OpenAI API key</h3>
-            <span className={`plan-pill${onKey ? ' on' : ''}`}>{onKey ? 'Connected' : 'Not connected'}</span>
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-[10px] max-md:flex-wrap max-md:items-start max-md:gap-x-[9px] max-md:gap-y-[6px]">
+            <h3 className="font-display text-[18px] font-extrabold normal-case tracking-[-0.02em] text-ink max-md:text-[17px]">
+              OpenAI API key
+            </h3>
+            <span className={planPill(onKey)}>{onKey ? 'Connected' : 'Not connected'}</span>
           </div>
-          <p className="plan-desc">Pay per token on your own OpenAI account — no ChatGPT subscription involved</p>
+          <p className="mt-1.5 text-[14px] leading-[1.55] text-ink-soft max-md:text-[13.5px]">
+            Pay per token on your own OpenAI account — no ChatGPT subscription involved
+          </p>
 
           {onKey ? (
             <>
-              <div className="plan-actions-row">
+              <div className={actionsRow}>
                 {modelChips(true)}
-                <button className="btn danger" onClick={remove} disabled={busy}>
+                <Button variant="danger" className={rowBtn} onClick={remove} disabled={busy}>
                   Disconnect
-                </button>
+                </Button>
               </div>
-              {chosen && <p className="plan-note">{chosen.blurb}</p>}
+              {chosen && <p className="mt-[10px] text-[13px] text-ink-faint">{chosen.blurb}</p>}
             </>
           ) : showKey ? (
-            <div className="plan-flow">
-              <p className="ma-help">The key is stored on the server and never shown again.</p>
-              <input
-                className="ma-input"
+            <div className={planFlow}>
+              <p className="mb-3 mt-2 text-[13px] leading-[1.55] text-ink-soft">
+                The key is stored on the server and never shown again.
+              </p>
+              <Input
+                className={maInput}
                 value={apiKey}
                 onChange={(e) => setApiKey(e.target.value)}
                 placeholder="sk-…"
@@ -417,27 +477,27 @@ export function ModelAccountPanel({ onChange }: { onChange?: () => void }) {
                 autoFocus
                 spellCheck={false}
               />
-              <div className="ma-actions">
-                <button className="btn primary" onClick={saveKey} disabled={busy || !apiKey.trim()}>
+              <div className={maActions}>
+                <Button variant="primary" className={rowBtn} onClick={saveKey} disabled={busy || !apiKey.trim()}>
                   {busy ? 'Saving…' : 'Save key'}
-                </button>
-                <button className="btn ghost" onClick={() => setShowKey(false)}>
+                </Button>
+                <Button variant="ghost" className={rowBtn} onClick={() => setShowKey(false)}>
                   Cancel
-                </button>
+                </Button>
               </div>
             </div>
           ) : (
-            <div className="plan-actions-row">
+            <div className={actionsRow}>
               {modelChips(false)}
-              <button className="btn" onClick={() => setShowKey(true)} disabled={busy}>
+              <Button className={rowBtn} onClick={() => setShowKey(true)} disabled={busy}>
                 {replaces ? 'Use instead' : 'Connect'}
-              </button>
+              </Button>
             </div>
           )}
         </div>
       </section>
 
-      {error && <p className="ma-error">{error}</p>}
+      {error && <p className="mt-[10px] text-[12.5px] text-accent-ink">{error}</p>}
     </div>
   )
 }

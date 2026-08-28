@@ -1,8 +1,16 @@
 import { useState } from 'react'
 import { authClient } from '../lib/auth'
 import { setName } from '../lib/identity'
-import { Logo } from '../App'
 import { posthog } from '../lib/posthog'
+import { AuthScreen } from '../components/ui/screen'
+import { Wordmark } from '../components/ui/wordmark'
+import { Button } from '../components/ui/button'
+import { Input } from '../components/ui/input'
+import { Field } from '../components/ui/field'
+import { Callout } from '../components/ui/callout'
+
+/* the auth form's fields sit on paper and soften their focus ring */
+const authInput = 'rounded-lg bg-paper focus:border-ink-soft focus:ring-0 md:text-sm'
 
 /* If login interrupted an MCP OAuth authorize redirect, send the browser
    back into the flow so the agent connection completes. */
@@ -147,44 +155,45 @@ export function AuthPage() {
   }
 
   return (
-    <div className="auth-page">
-      <form className="auth-card" onSubmit={submit}>
-        <div className="home-mark">
-          <Logo /> Doop
-        </div>
-        <h1>
+    <AuthScreen>
+      <form
+        className="flex w-[min(400px,100%)] flex-col gap-3.5 rounded-[16px] border border-line bg-surface p-6 pt-[30px] shadow-pop sm:p-9 sm:pb-7"
+        onSubmit={submit}
+      >
+        <Wordmark className="mb-1.5" />
+        <h1 className="font-display text-[30px] font-semibold leading-[1.1] tracking-[-0.02em]">
           {mode === 'signin' && 'Welcome back.'}
           {mode === 'signup' && 'Create your account.'}
           {mode === 'forgot' && 'Reset your password.'}
           {mode === 'reset' && 'Pick a new password.'}
         </h1>
-        <p className="auth-sub">
+        <p className="mb-2 text-[14px] leading-[1.5] text-ink-soft">
           {mode === 'forgot' ? (
             <>Enter your account email and we&rsquo;ll send you a reset link.</>
           ) : mode === 'reset' ? (
             <>Choose a new password for your account.</>
           ) : (
             <>
-              A shared canvas for humans <em>&amp; agents</em>. Sign{' '}
+              A shared canvas for humans <em className="not-italic text-brand">&amp; agents</em>. Sign{' '}
               {mode === 'signin' ? 'in to your canvases' : 'up to start designing'}.
             </>
           )}
         </p>
         {mode === 'signup' && (
-          <label>
-            Name
-            <input
+          <Field label="Name" labelVariant="form">
+            <Input
+              className={authInput}
               value={name}
               onChange={(e) => setNameField(e.target.value)}
               placeholder="Kevin"
               autoComplete="name"
             />
-          </label>
+          </Field>
         )}
         {mode !== 'reset' && (
-          <label>
-            Email
-            <input
+          <Field label="Email" labelVariant="form">
+            <Input
+              className={authInput}
               type="email"
               required
               value={email}
@@ -192,12 +201,12 @@ export function AuthPage() {
               placeholder="you@example.com"
               autoComplete="email"
             />
-          </label>
+          </Field>
         )}
         {mode !== 'forgot' && (
-          <label>
-            {mode === 'reset' ? 'New password' : 'Password'}
-            <input
+          <Field label={mode === 'reset' ? 'New password' : 'Password'} labelVariant="form">
+            <Input
+              className={authInput}
               type="password"
               required
               minLength={8}
@@ -206,30 +215,46 @@ export function AuthPage() {
               placeholder={mode === 'signin' ? '••••••••' : 'At least 8 characters'}
               autoComplete={mode === 'signin' ? 'current-password' : 'new-password'}
             />
-          </label>
+          </Field>
         )}
         {mode === 'signin' && (
-          <button type="button" className="auth-forgot" onClick={() => switchMode('forgot')}>
+          <Button
+            variant="link"
+            size="sm"
+            className="-mt-1.5 self-end px-0 py-0 text-xs font-normal text-ink-faint hover:text-ink"
+            onClick={() => switchMode('forgot')}
+          >
             Forgot password?
-          </button>
+          </Button>
         )}
-        {notice && <div className="auth-notice">{notice}</div>}
+        {notice && <Callout>{notice}</Callout>}
         {error && (
-          <div className="auth-error">
+          <Callout tone="error">
             {error}
             {suggestMode && (
-              <button type="button" className="auth-error-action" onClick={() => switchMode(suggestMode)}>
+              <Button
+                variant="link"
+                size="sm"
+                className="mt-1.5 block px-0 py-0 text-accent-ink underline underline-offset-[3px]"
+                onClick={() => switchMode(suggestMode)}
+              >
                 {suggestMode === 'signup' ? 'Create an account instead →' : 'Sign in instead →'}
-              </button>
+              </Button>
             )}
             {unverified && (
-              <button type="button" className="auth-error-action" onClick={resendVerification} disabled={busy}>
+              <Button
+                variant="link"
+                size="sm"
+                className="mt-1.5 block px-0 py-0 text-accent-ink underline underline-offset-[3px]"
+                onClick={resendVerification}
+                disabled={busy}
+              >
                 Resend verification email →
-              </button>
+              </Button>
             )}
-          </div>
+          </Callout>
         )}
-        <button className="btn primary" type="submit" disabled={busy}>
+        <Button variant="primary" size="lg" block className="mt-2" type="submit" disabled={busy}>
           {busy
             ? '…'
             : mode === 'signin'
@@ -239,15 +264,16 @@ export function AuthPage() {
                 : mode === 'forgot'
                   ? 'Send reset link'
                   : 'Set new password'}
-        </button>
-        <button
-          type="button"
-          className="auth-switch"
+        </Button>
+        <Button
+          variant="link"
+          size="sm"
+          className="p-1.5 text-[13px] font-normal text-ink-faint hover:text-ink"
           onClick={() => switchMode(mode === 'signin' ? 'signup' : 'signin')}
         >
           {mode === 'signin' ? 'No account yet? Sign up' : 'Have an account? Sign in'}
-        </button>
+        </Button>
       </form>
-    </div>
+    </AuthScreen>
   )
 }

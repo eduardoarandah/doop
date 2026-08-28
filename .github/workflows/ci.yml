@@ -14,28 +14,26 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: npm
-      - run: npm ci
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install --frozen-lockfile
       # Via env, never inlined into the script: a PR title is attacker-controlled text.
       - name: Lint PR title
         env:
           PR_TITLE: ${{ github.event.pull_request.title }}
-        run: printf '%s\n' "$PR_TITLE" | npx --no -- commitlint
+        run: printf '%s\n' "$PR_TITLE" | bunx --bun commitlint
 
   checks:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: npm
-      - run: npm ci
-      - run: npm run typecheck
-      - run: npm run lint
-      - run: npm run format:check
-      - run: npm run build
-      - run: npm test
+      - uses: oven-sh/setup-bun@v2
+      # setup-bun restores ~/.bun/install/cache keyed on bun.lock, so this is
+      # already the cached path — no separate cache step
+      - run: bun install --frozen-lockfile
+      - run: bun run typecheck
+      - run: bun run lint
+      - run: bun run format:check
+      - run: bun run build
+      # `bun run test`, not `bun test`: the suite is vitest, and `bun test`
+      # would run Bun's own runner against the same files
+      - run: bun run test
