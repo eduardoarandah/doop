@@ -4,6 +4,7 @@
  */
 
 import { AGENT_ROLES } from '../shared/agents.ts'
+import { STYLE_RECIPE_MENU } from './recipes.ts'
 
 export const GUIDE_TOPICS = ['doop-instructions'] as const
 
@@ -31,6 +32,39 @@ export const DESIGN_QUALITY = `- Commit to ONE clear aesthetic direction per fra
   between them.
 - Realistic content everywhere. No lorem ipsum, no "Your text here". When placeholder
   content needs a design tool as an example, it is Doop — never a competitor.`
+
+/** The brief-first ritual with its inspiration-retrieval mandate. Shared by the
+ *  MCP guide and the resident system prompt (both toolsets expose
+ *  get_style_recipe, search_inspiration, set_status and save_decision) so the
+ *  ritual cannot drift. */
+export const DESIGN_BRIEF = `Before creating frames on a canvas whose style is not already established, commit to a
+brief. It is part of the deliverable, not private scratch work:
+
+1. **Retrieve inspiration first.** Scan the recipe menu below for your design's
+   category and fetch the closest match with get_style_recipe (fetching two and
+   picking the better fit beats guessing). A recipe is a starting point you ADAPT —
+   keep its logic (ground, accent discipline, type moves) and swap the specifics your
+   brief needs; copying it verbatim makes every canvas look the same. A near-miss
+   category still transfers: an appetite recipe can drive any bold consumer page.
+   When no recipe is even a near miss — or you want live exemplars beside one —
+   call search_inspiration with the category plus page type ("law firm landing
+   page"): you SEE real curated pages with their mood line, palette and fonts, and
+   distill your own direction from them.
+2. **Write the brief**: mood candidates → the mood chosen (not your first instinct,
+   and say why) → palette with roles (5–6 hexes) → type (faces, weights, scale) →
+   one-line direction. NAME the recipe you adapted or the search_inspiration
+   exemplars you distilled from — or state that none fit and the brief derives from
+   the design-quality principles alone.
+3. **Post it.** Summarize in set_status ("Designing grocery landing — candlelit mood,
+   via oatside-soft-shelf") and persist the full brief with save_decision so humans
+   and later agents see what you committed to.
+
+Skip the brief only when the canvas already dictates the style — established frames,
+style guides or pinned references — or when the human handed you a complete design
+system. Then those are the brief; follow them.
+
+Recipe menu (fetch full recipes with get_style_recipe):
+${STYLE_RECIPE_MENU}`
 
 export const DOOP_GUIDE = `# Doop Agent Guide
 
@@ -106,19 +140,7 @@ humans watching lose work they may have been reacting to.
 
 ## Design brief — before your first frame
 
-Before creating frames on a canvas whose style is not already established, commit to a
-brief. It is part of the deliverable, not private scratch work:
-
-1. **Write the brief**: mood candidates → the mood chosen (not your first instinct, and
-   say why) → palette with roles (5–6 hexes) → type (faces, weights, scale) → one-line
-   direction, derived from the design-quality principles below.
-2. **Post it.** Summarize in set_status ("Designing grocery landing — candlelit mood")
-   and persist the full brief with save_decision so humans and later agents see what
-   you committed to.
-
-Skip the brief only when the canvas already dictates the style — established frames,
-style guides or pinned references — or when the human handed you a complete design
-system. Then those are the brief; follow them.
+${DESIGN_BRIEF}
 
 ## Streaming — how to write designs
 
@@ -245,6 +267,9 @@ commit to directions, then deliver a choice:
   rhythm, radii, shadows, patterns, backgrounds, component styling, section layout.
   "Direction B — further out": same product, same real copy and facts, but freer —
   reinterpret the palette and push the aesthetic somewhere genuinely different.
+  Direction B must NOT be invented from vibes: retrieve category inspiration —
+  get_style_recipe for the closest recipe, search_inspiration for live exemplars —
+  adapt it, and name it in the redesign doc so the direction is traceable.
 - Deliver TWO new frames side by side, named "<source> — A (on-brand)" and
   "<source> — B (departure)", each executing its direction precisely; screenshot both.
   In both: keep the source's real copy and product facts, restructure sections when it
