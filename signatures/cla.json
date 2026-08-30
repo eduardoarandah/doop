@@ -1,1 +1,12 @@
-{"signedContributors":[]}
+{
+  "signedContributors": [
+    {
+      "name": "manuelbiermann",
+      "id": 12250753,
+      "comment_id": 5467522666,
+      "created_at": "2026-08-30T08:01:32Z",
+      "repoId": 1342943152,
+      "pullRequestNo": 44
+    }
+  ]
+}
