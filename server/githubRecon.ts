@@ -1,4 +1,5 @@
 import { pickModel } from './agentModel.ts'
+import type { TurnBlock } from './openaiAgent.ts'
 import { createAsset } from './assets.ts'
 import * as actions from './actions.ts'
 import {
@@ -34,6 +35,7 @@ const MAX_RECONSTRUCTIONS_PER_IMPORT = 12
 const RECON_CONCURRENCY = 2
 const MODEL_MAX_TOKENS = 32_000
 const MAX_REQUEST_ROUNDS = 2
+const REVIEW_ROUNDS = 1
 const MAX_REQUESTED_FILES = 15
 const MAX_REQUESTED_BYTES = 100_000
 const MAX_TREE_LINES = 400
@@ -341,7 +343,57 @@ export function scheduleReconstructions(
         }
         const { html, height } = extractHtml((result?.content ?? []) as { type: string; text?: string }[])
         const withAssets = await resolveRepoAssets(conn, html, pathSet)
-        actions.updateFrame(job.frameId, { html: wrapGeneratedHtml(withAssets, conn, job.screen), height }, actor)
+        let frame = actions.updateFrame(
+          job.frameId,
+          { html: wrapGeneratedHtml(withAssets, conn, job.screen), height },
+          actor,
+        )
+
+        /* Doop's own doctrine: never ship without looking. Render the draft,
+           show the model its own output, and let it fix what is visibly
+           wrong — the single biggest quality lever short of executing the
+           app. Draft stays on the canvas while the fix round runs. */
+        for (let round = 0; frame && round < REVIEW_ROUNDS; round++) {
+          try {
+            const { renderFrame } = await import('./screenshot.ts')
+            const shot = await renderFrame(frame, frame.height > 4000 ? 0.7 : 1, {
+              type: 'jpeg',
+              quality: 72,
+              maxHeight: 8000,
+            })
+            messages.push({ role: 'assistant', content: (result?.content ?? []) as TurnBlock[] })
+            messages.push({
+              role: 'user',
+              content: [
+                {
+                  type: 'image',
+                  source: { type: 'base64', media_type: 'image/jpeg', data: shot.toString('base64') },
+                },
+                {
+                  type: 'text',
+                  text: 'This is YOUR reconstruction, rendered. Judge it against the source you read like a senior designer: wrong palette or fonts, broken or overlapping layout, clipped or missing sections, dead empty areas, images that did not resolve. Then output the corrected COMPLETE document — same rules, full page, ending with the height comment. If it is genuinely faithful already, output the document unchanged.',
+                },
+              ],
+            })
+            const fixed = await model!.run({
+              system: [{ text: SYSTEM_PROMPT, cache: true }],
+              tools: [],
+              messages,
+              maxTokens: MODEL_MAX_TOKENS,
+            })
+            result = fixed
+            const redo = extractHtml(fixed.content as { type: string; text?: string }[])
+            const redoAssets = await resolveRepoAssets(conn, redo.html, pathSet)
+            frame = actions.updateFrame(
+              job.frameId,
+              { html: wrapGeneratedHtml(redoAssets, conn, job.screen), height: redo.height },
+              actor,
+            )
+          } catch (err) {
+            console.error(`[github-recon] review round for ${job.screen.route} failed — keeping the draft`, err)
+            break
+          }
+        }
       } catch (err) {
         console.error(`[github-recon] ${job.screen.route} failed`, err)
         if (isAccountError(err)) accountDead = true
