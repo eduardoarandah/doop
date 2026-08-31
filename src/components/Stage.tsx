@@ -217,6 +217,40 @@ export function Stage({ onAddFrame }: { onAddFrame: () => void }) {
     }
   }, [])
 
+  /* ⌘0 → 100%, ⌘+ / ⌘− → step zoom, all pivoting on the view center —
+     preventDefault keeps the browser's own page zoom out of it */
+  useEffect(() => {
+    function zoomTo(next: number) {
+      const el = ref.current
+      if (!el) return
+      const cx = el.clientWidth / 2
+      const cy = el.clientHeight / 2
+      const vp = useStore.getState().viewport
+      const zoom = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, next))
+      const scale = zoom / vp.zoom
+      useStore.getState().setViewport({
+        x: cx - (cx - vp.x) * scale,
+        y: cy - (cy - vp.y) * scale,
+        zoom,
+      })
+    }
+    function onKey(e: KeyboardEvent) {
+      if (!(e.metaKey || e.ctrlKey) || e.altKey) return
+      const t = e.target as HTMLElement
+      if (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable) return
+      if (e.key !== '0' && e.key !== '=' && e.key !== '+' && e.key !== '-') return
+      /* '+' arrives as ⇧= on most layouts; any other shifted combo isn't ours */
+      if (e.shiftKey && e.key !== '+') return
+      e.preventDefault()
+      const zoom = useStore.getState().viewport.zoom
+      if (e.key === '0') zoomTo(1)
+      else if (e.key === '-') zoomTo(zoom / 1.25)
+      else zoomTo(zoom * 1.25)
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [])
+
   function toWorld(clientX: number, clientY: number) {
     const rect = ref.current!.getBoundingClientRect()
     const vp = useStore.getState().viewport

@@ -7,7 +7,7 @@ import { sendWs } from '../lib/ws'
 import { throttle } from '../lib/throttle'
 import { getIdentity } from '../lib/identity'
 import { FRAME_BOOTSTRAP } from '../lib/frameRuntime'
-import { recordUpdate } from '../lib/history'
+import { recordCreate, recordUpdate } from '../lib/history'
 import { snapFrame } from '../lib/snap'
 import { FrameContextMenu } from './FrameContextMenu'
 import { ContextMenu, ContextMenuTrigger } from './ui/context-menu'
@@ -30,6 +30,11 @@ const EDITOR_CHIP =
   'inline-flex items-center gap-1 rounded-full px-[7px] py-0.5 text-[10px] font-bold text-white animate-[chip-in_0.25s_ease]'
 /* the element toolbar's buttons sit on ink and stay compact */
 const EL_TOOLBAR_BTN = 'rounded-[7px] px-2 py-1 text-xs'
+
+/* Figma-style ⌥⇧-drag duplicate cursor: a doubled pointer, hotspot on the
+   front arrow's tip. `copy` is the fallback where custom cursors fail. */
+const DUP_CURSOR_SVG = `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24"><path d="M9 8v12.6l3.4-2.9 2 4.6 2.3-1-2-4.5 4.5-.4z" fill="#000" stroke="#fff" stroke-width="1.2"/><path d="M4 3v12.6l3.4-2.9 2 4.6 2.3-1-2-4.5 4.5-.4z" fill="#000" stroke="#fff" stroke-width="1.2"/></svg>`
+const DUP_CURSOR = `url("data:image/svg+xml;charset=utf-8,${encodeURIComponent(DUP_CURSOR_SVG)}") 4 3, copy`
 
 /** Re-render the iframe at most every `ms` — keeps streaming chunk updates smooth. */
 function useThrottledValue<T>(value: T, ms: number): T {
@@ -74,6 +79,9 @@ export const FrameView = memo(function FrameView({ frame, raster }: { frame: Fra
   const me = getIdentity().clientId
   const editors = Object.values(presences).filter((p) => p.activeFrameId === frame.id && p.clientId !== me)
   const [dragging, setDragging] = useState(false)
+  /* ⌥⇧-drag (Figma-style duplicate): the original stays behind, the copy
+     rides the cursor — shown with a doubled cursor while it lasts */
+  const [duping, setDuping] = useState(false)
   const [editing, setEditing] = useState(false)
   /* after exiting edit mode, hold renders until the final serialized HTML
      lands in the store — otherwise a stale post would morph the edit away */
@@ -96,9 +104,25 @@ export const FrameView = memo(function FrameView({ frame, raster }: { frame: Fra
     const off = { x: e.nativeEvent.offsetX, y: e.nativeEvent.offsetY }
     const orig = { x: frame.x, y: frame.y, width: frame.width, height: frame.height }
     let moved = false
+    /* ⌥⇧-drag duplicates: the moment the drag is real, leave a copy of the
+       frame at its origin and keep dragging this one — same net effect as
+       Figma's "drag off a duplicate", without retargeting the drag */
+    const duplicating = mode === 'move' && e.altKey && e.shiftKey
+    let dupDropped = false
+    if (duplicating) setDuping(true)
 
     function onMove(ev: PointerEvent) {
       if (Math.abs(ev.clientX - start.x) + Math.abs(ev.clientY - start.y) > 4) moved = true
+      if (duplicating && moved && !dupDropped) {
+        dupDropped = true
+        api
+          .createFrame(frame.canvasId, { name: frame.name, html: frame.html, ...orig })
+          .then((f) => {
+            posthog.capture('frame_duplicated', { via: 'drag' })
+            recordCreate(f)
+          })
+          .catch(console.error)
+      }
       const zoom = useStore.getState().viewport.zoom
       const dx = (ev.clientX - start.x) / zoom
       const dy = (ev.clientY - start.y) / zoom
@@ -123,6 +147,7 @@ export const FrameView = memo(function FrameView({ frame, raster }: { frame: Fra
       window.removeEventListener('pointermove', onMove)
       window.removeEventListener('pointerup', onUp)
       setDragging(false)
+      if (duplicating) setDuping(false)
       useStore.getState().setSnapGuides([])
       const f = useStore.getState().canvas?.frames.find((x) => x.id === frame.id)
       if (f) {
@@ -407,6 +432,7 @@ export const FrameView = memo(function FrameView({ frame, raster }: { frame: Fra
               'absolute -top-[26px] left-0 right-0 flex origin-bottom-left cursor-grab select-none items-center gap-2 whitespace-nowrap text-[12px] font-semibold text-ink-soft',
               COUNTER_SCALE,
             )}
+            style={duping ? { cursor: DUP_CURSOR } : undefined}
             onPointerDown={(e) => startDrag(e, 'move', false, true)}
           >
             {isSyncedFrame(frame.html) && (
@@ -466,6 +492,7 @@ export const FrameView = memo(function FrameView({ frame, raster }: { frame: Fra
               stream && 'border-transparent outline-none',
               dragging && 'cursor-grabbing',
             )}
+            style={duping ? { cursor: DUP_CURSOR } : undefined}
             onPointerDown={(e) => startDrag(e, 'move', true)}
             onDoubleClick={() => canEdit && !editing && enterEdit()}
             onPointerMove={(e) => {
