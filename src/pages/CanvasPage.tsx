@@ -645,10 +645,9 @@ function ImportModal({
 
   function openRepoReview(connection: GithubConnectionInfo, manifest: RepoManifest) {
     setRepoReview({ connection, manifest })
-    /* components are the default import; pages stay opt-in behind a toggle */
-    setRepoSelected(
-      new Set(manifest.screens.filter((s) => s.kind === 'component' || s.kind === 'story').map(screenKey)),
-    )
+    /* the design system is the default import; components and pages are
+       one click away, never silently pre-committed */
+    setRepoSelected(new Set())
     setShowPages(false)
     setError(null)
   }
@@ -733,6 +732,11 @@ function ImportModal({
             <div className="mt-4 flex items-center justify-between px-[2px] pb-[9px]">
               <b className="text-[12px] text-ink-soft">
                 {repoSelected.size} of {visibleScreens.length} selected
+                {repoSelected.size > 12 && (
+                  <span className="ml-2 font-normal text-ink-faint">
+                    — Doop sketches 12 per import; the rest stay outlines
+                  </span>
+                )}
               </b>
               <span className="flex gap-3">
                 <Button
@@ -833,7 +837,17 @@ function ImportModal({
                   ? 'Importing…'
                   : [
                       extractSystem ? 'design system' : '',
-                      repoSelected.size ? `${repoSelected.size} ${repoSelected.size === 1 ? 'item' : 'items'}` : '',
+                      repoSelected.size
+                        ? `${repoSelected.size} ${
+                            repoSelected.size === 1
+                              ? 'component'
+                              : visibleScreens
+                                    .filter((s) => repoSelected.has(screenKey(s)))
+                                    .every((s) => s.kind === 'component' || s.kind === 'story')
+                                ? 'components'
+                                : 'screens'
+                          }`
+                        : '',
                     ]
                       .filter(Boolean)
                       .join(' + ')
