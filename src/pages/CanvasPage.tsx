@@ -466,7 +466,17 @@ export function CanvasPage({ canvasId }: { canvasId: string }) {
           }}
         />
       )}
-      {limitWall && <LimitWall canvasId={canvasId} onClose={() => useStore.getState().setLimitWall(false)} />}
+      {limitWall && (
+        <LimitWall
+          canvasId={canvasId}
+          onClose={() => useStore.getState().setLimitWall(false)}
+          onOpenConnect={() => {
+            useStore.getState().setLimitWall(false)
+            posthog.capture('agent_connection_opened')
+            setShowConnect(true)
+          }}
+        />
+      )}
       {showImport && (
         <ImportModal
           canvasId={canvasId}

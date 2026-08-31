@@ -4,7 +4,6 @@ import type { Allowance } from '../lib/api'
 import { posthog } from '../lib/posthog'
 import { useStore } from '../lib/store'
 import { navigate } from '../App'
-import { ConnectBody, AgentArrival } from './ConnectModal'
 import { Button } from './ui/button'
 import { Modal, ModalActions, ModalLede, ModalTitle } from './ui/modal'
 import { cn } from '@/lib/utils'
@@ -64,7 +63,15 @@ export function MeterLine({ allowance }: { allowance: Allowance | null }) {
   )
 }
 
-export function LimitWall({ canvasId, onClose }: { canvasId: string; onClose: () => void }) {
+export function LimitWall({
+  canvasId,
+  onClose,
+  onOpenConnect,
+}: {
+  canvasId: string
+  onClose: () => void
+  onOpenConnect: () => void
+}) {
   const { allowance } = useAllowance()
   /* "used up" only fits a server that granted free tasks in the first place;
      everywhere else (the default, limit 0) this wall IS the getting-started
@@ -107,16 +114,21 @@ export function LimitWall({ canvasId, onClose }: { canvasId: string; onClose: ()
           </Button>
         </ModalActions>
 
-        {/* the second path stays fully visible — a divider, not a disclosure:
-            people who live in Claude Code/Codex should see it without hunting */}
+        {/* the MCP path is a different mode — an agent you prompt yourself, not
+            one that picks up queued tasks — so it hands off instead of inlining
+            the setup steps here where they read like a fix for the queued card */}
         <div className="mt-5 border-t border-line pt-4">
-          <p className="text-[12.5px] font-semibold text-ink">
-            Or drive the canvas from your own agent (Claude Code, Codex)
+          <p className="text-[12.5px] text-ink-faint">
+            Prefer to drive the canvas yourself from Claude Code, Codex, or another MCP client? That agent designs as
+            you prompt it — queued tasks stay with the Doop Agent.{' '}
+            <button
+              type="button"
+              className="font-semibold text-ink underline underline-offset-2"
+              onClick={onOpenConnect}
+            >
+              See how to connect it
+            </button>
           </p>
-          <ConnectBody canvasId={canvasId} />
-          <ModalActions>
-            <AgentArrival />
-          </ModalActions>
         </div>
 
         <ModalActions>
