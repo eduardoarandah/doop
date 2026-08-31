@@ -93,7 +93,6 @@ export async function createConnection(input: {
   /** app mode — the caller must have verified the install handoff (pass) */
   installationId?: string
   branch?: string
-  deployUrl?: string
   createdBy: string
 }): Promise<GithubConnection> {
   const repo = input.repo
@@ -113,19 +112,13 @@ export async function createConnection(input: {
       throw new Error('that repository is not part of the GitHub App installation')
   }
 
-  /* Verify reachability up front and pick up the repo's own metadata: the
-     default branch when none was given, the homepage as the capture base. */
+  /* Verify reachability up front and pick up the default branch when none
+     was given. Import is a one-time, code-only job: what lands on the canvas
+     comes from the repository itself — live-site capture belongs to the
+     website importer and stays out of this flow entirely. */
   const auth = await connectionAuth({ token, installationId })
-  const meta = await ghJson<{ default_branch: string; homepage: string | null }>(auth, `/repos/${repo}`)
+  const meta = await ghJson<{ default_branch: string }>(auth, `/repos/${repo}`)
   const branch = input.branch?.trim() || meta.default_branch
-  let deployUrl: string | null = null
-  const candidate = input.deployUrl?.trim() || meta.homepage || ''
-  try {
-    const url = new URL(/^https?:\/\//i.test(candidate) ? candidate : `https://${candidate}`)
-    if (candidate && (url.protocol === 'http:' || url.protocol === 'https:')) deployUrl = url.href
-  } catch {
-    /* no usable deployment URL — the live-capture lane just stays off */
-  }
 
   const row: GithubConnection = {
     id: nanoid(8),
@@ -134,35 +127,13 @@ export async function createConnection(input: {
     branch,
     token,
     installationId,
-    deployUrl,
+    deployUrl: null,
     createdBy: input.createdBy,
     createdAt: Date.now(),
     lastSyncedAt: null,
   }
   await db.insert(githubConnections).values(row)
   return row
-}
-
-/** Normalize a user-supplied deployment URL; '' clears it, garbage throws. */
-function cleanDeployUrl(raw: string): string | null {
-  const candidate = raw.trim()
-  if (!candidate) return null
-  const url = new URL(/^https?:\/\//i.test(candidate) ? candidate : `https://${candidate}`)
-  if (url.protocol !== 'http:' && url.protocol !== 'https:') throw new Error('the deployment URL must be http(s)')
-  return url.href
-}
-
-/** Set or clear the connection's deployment URL — the app-install flow has
- *  no URL prompt, so connections often start without one (every page screen
- *  lands as a placeholder until this is set). */
-export async function setDeployUrl(canvasId: string, id: string, raw: string): Promise<GithubConnection | undefined> {
-  const deployUrl = cleanDeployUrl(raw)
-  const [row] = await db
-    .update(githubConnections)
-    .set({ deployUrl })
-    .where(and(eq(githubConnections.id, id), eq(githubConnections.canvasId, canvasId)))
-    .returning()
-  return row ?? undefined
 }
 
 export function listConnections(canvasId: string): Promise<GithubConnection[]> {
@@ -193,7 +164,7 @@ export async function deleteConnection(canvasId: string, id: string): Promise<bo
 /* Screen detection — pure functions over the repo's file listing      */
 
 export type ScreenKind = 'page' | 'story' | 'static'
-export type PixelSource = 'live' | 'static' | 'placeholder'
+export type PixelSource = 'static' | 'placeholder'
 
 export interface RepoScreen {
   kind: ScreenKind
@@ -350,12 +321,6 @@ export async function analyzeConnection(conn: GithubConnection): Promise<RepoMan
   }
 
   const screens = detectScreens(paths, pkg)
-  /* Lane assignment needs the connection, so it happens here, not in the
-     pure detector: concrete page routes capture live when a deployment is
-     known; everything else that isn't repo HTML starts as a placeholder. */
-  for (const s of screens) {
-    if (s.kind === 'page' && conn.deployUrl && !s.dynamic) s.source = 'live'
-  }
   return {
     connection: connectionInfo(conn),
     framework: detectFramework(pkg),
@@ -458,8 +423,8 @@ export function placeholderHtml(
 ): string {
   const reason =
     screen.kind === 'story'
-      ? 'A Storybook story — capture it from a running Storybook, or design it here.'
-      : 'This screen could not be captured — it may need a login. Browse it with the doop-sync snippet installed, or design it here.'
+      ? 'A Storybook story from the repo — it exists as code, not renderable HTML. Ask an agent to design it here.'
+      : 'This screen exists in the repo as code, not renderable HTML. Ask an agent to design it here.'
   return (
     '<!doctype html>\n<html><head>' +
     markerMeta(conn.id, screen) +
@@ -521,11 +486,11 @@ export function matchSelection(manifest: RepoScreen[], raw: unknown): { screens:
   return { screens, rejected }
 }
 
-/** Import the selected screens: live captures via the page importer, repo
- *  HTML directly, placeholders for the rest. The manifest is recomputed here
- *  and the selection resolved against it — see matchSelection. A screen that
- *  fails its lane degrades to a placeholder rather than vanishing — the map
- *  stays complete and the frame says how to fill it in. */
+/** Import the selected screens — a one-time, code-only job: repo HTML lands
+ *  directly, everything that exists only as code lands as a labeled outline
+ *  frame holding the screen's place in the product map. Nothing here touches
+ *  the live site — that is the website importer's territory. The manifest is
+ *  recomputed and the selection resolved against it — see matchSelection. */
 export async function importScreens(
   conn: GithubConnection,
   canvas: { id: string; frames: Frame[] },
@@ -534,7 +499,6 @@ export async function importScreens(
 ): Promise<GithubImportResult> {
   const manifest = await analyzeConnection(conn)
   const { screens: selection, rejected } = matchSelection(manifest.screens, rawSelection)
-  const { importPage, assertPublicHttpUrl } = await import('./importer.ts')
 
   /* same grid the site importer uses: 3 columns to the right of everything */
   const rightmost = canvas.frames.reduce((right, f) => Math.max(right, f.x + f.width), 0)
@@ -570,17 +534,10 @@ export async function importScreens(
   for (const screen of selection) {
     try {
       let html: string
-      let width = DEFAULT_W
+      const width = DEFAULT_W
       let height = DEFAULT_H
-      let name = screen.title
-      if (screen.source === 'live' && conn.deployUrl) {
-        const url = assertPublicHttpUrl(new URL(screen.route, conn.deployUrl).href)
-        const imported = await importPage(url.href)
-        html = injectHead(imported.html, markerMeta(conn.id, screen))
-        width = imported.width
-        height = imported.height
-        name = imported.title || screen.title
-      } else if (screen.source === 'static') {
+      const name = screen.title
+      if (screen.source === 'static') {
         html = wrapRepoHtml(await fetchRepoFile(conn, screen.sourcePath), conn, screen)
       } else {
         html = placeholderHtml(conn, screen)
@@ -606,74 +563,6 @@ export async function importScreens(
     .catch((err: unknown) => console.error('[github] lastSyncedAt write failed', err))
 
   return { frames, failures }
-}
-
-/** Refresh every frame this connection imported, in place: repo HTML re-reads
- *  the branch head, live captures re-run. Positions the user arranged stay —
- *  only content (and captured height) track the source, mirroring the
- *  design-sync update contract. Placeholder frames whose screen now HAS a
- *  reachable lane (a deployment URL was added after import) are upgraded to
- *  real pixels in place; placeholders that still have no lane stay put.
- *
- *  Markers live in frame HTML, which any member can edit — so they are only
- *  trusted as far as the freshly computed manifest confirms them. A marker
- *  pointing at a path the repo's screen scan doesn't list (hand-edited, or
- *  the file moved) is skipped, never fetched. */
-export async function resyncConnection(
-  conn: GithubConnection,
-  canvas: { id: string; frames: Frame[] },
-  actor: Actor,
-): Promise<{ updated: number; failures: { route: string; error: string }[] }> {
-  const { importPage, assertPublicHttpUrl } = await import('./importer.ts')
-  const manifest = await analyzeConnection(conn)
-  const byIdentity = new Map(manifest.screens.map((s) => [screenIdentity(s), s]))
-  const mine = canvas.frames
-    .flatMap((frame) => {
-      const marker = githubFrameMarker(frame.html)
-      if (marker?.connectionId !== conn.id) return []
-      const screen = byIdentity.get(screenIdentity(marker))
-      return screen ? [{ frame, screen }] : []
-    })
-    .slice(0, MAX_IMPORT_SCREENS)
-
-  let updated = 0
-  const failures: { route: string; error: string }[] = []
-  for (const { frame, screen } of mine) {
-    /* a placeholder only re-runs when its screen now has a real lane */
-    if (isGithubPlaceholderHtml(frame.html) && screen.source === 'placeholder') continue
-    try {
-      if (screen.source === 'static') {
-        const html = wrapRepoHtml(await fetchRepoFile(conn, screen.sourcePath), conn, screen)
-        if (html !== frame.html) {
-          actions.updateFrame(frame.id, { html }, actor)
-          updated++
-        }
-      } else if (screen.source === 'live' && conn.deployUrl) {
-        const url = assertPublicHttpUrl(new URL(screen.route, conn.deployUrl).href)
-        const imported = await importPage(url.href)
-        const html = injectHead(imported.html, markerMeta(conn.id, screen))
-        if (html !== frame.html) {
-          /* upgrading a placeholder also adopts the capture's real width */
-          const wasPlaceholder = isGithubPlaceholderHtml(frame.html)
-          actions.updateFrame(
-            frame.id,
-            { html, height: imported.height, ...(wasPlaceholder ? { width: imported.width } : {}) },
-            actor,
-          )
-          updated++
-        }
-      }
-    } catch (e) {
-      failures.push({ route: screen.route, error: e instanceof Error ? e.message : 'resync failed' })
-    }
-  }
-
-  db.update(githubConnections)
-    .set({ lastSyncedAt: Date.now() })
-    .where(eq(githubConnections.id, conn.id))
-    .catch((err: unknown) => console.error('[github] lastSyncedAt write failed', err))
-
-  return { updated, failures }
 }
 
 export function isGithubPlaceholderHtml(html: string): boolean {

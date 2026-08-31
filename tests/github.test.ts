@@ -72,7 +72,7 @@ describe('screen enumeration', () => {
       ['static', 'public/landing.html'],
       ['static', 'dist/index.html'],
     ])
-    expect(screens.every((s) => s.source !== 'live')).toBe(true)
+    expect(screens.every((s) => (s.kind === 'static' ? s.source === 'static' : s.source === 'placeholder'))).toBe(true)
   })
 })
 
@@ -201,21 +201,9 @@ describe('github connection REST', () => {
     expect(noToken.status).toBe(400)
   })
 
-  it('validates deploy-URL patches and gates them like other connection routes', async () => {
-    expect((await stranger.patch(`/api/canvases/${canvasId}/github/nope`, { deployUrl: 'https://x.dev' })).status).toBe(
-      403,
-    )
-    expect((await owner.patch(`/api/canvases/${canvasId}/github/nope`, { deployUrl: 'https://x.dev' })).status).toBe(
-      404,
-    )
-    const bad = await owner.patch(`/api/canvases/${canvasId}/github/nope`, { deployUrl: 'http://' })
-    expect(bad.status).toBe(400)
-  })
-
-  it('404s analyze/import/resync for unknown connections', async () => {
+  it('404s analyze/import for unknown connections', async () => {
     expect((await owner.post(`/api/canvases/${canvasId}/github/nope/analyze`)).status).toBe(404)
     expect((await owner.post(`/api/canvases/${canvasId}/github/nope/import`, { screens: [] })).status).toBe(404)
-    expect((await owner.post(`/api/canvases/${canvasId}/github/nope/resync`)).status).toBe(404)
     expect((await stranger.post(`/api/canvases/${canvasId}/github/nope/analyze`)).status).toBe(403)
   })
 })

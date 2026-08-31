@@ -672,9 +672,8 @@ function ImportModal({
 
   const selectedCount = selected.size
   const laneLabel: Record<RepoScreen['source'], string> = {
-    live: 'live capture',
     static: 'from repo',
-    placeholder: 'placeholder',
+    placeholder: 'outline',
   }
 
   return (
@@ -694,9 +693,8 @@ function ImportModal({
             <ModalLede>
               {repoReview.manifest.screens.length} {repoReview.manifest.screens.length === 1 ? 'screen' : 'screens'}{' '}
               found
-              {repoReview.manifest.framework ? ` in a ${repoReview.manifest.framework} app` : ''}. Pages capture from
-              the live deployment, repo HTML imports directly, and the rest hold their place as placeholders until the
-              sync snippet fills them in.
+              {repoReview.manifest.framework ? ` in a ${repoReview.manifest.framework} app` : ''}. A one-time import:
+              repo HTML lands as frames, and screens that only exist as code land as outlines to design into.
             </ModalLede>
             <div className="mt-5 flex items-center justify-between px-[2px] pb-[9px]">
               <b className="text-[12px] text-ink-soft">
@@ -766,7 +764,7 @@ function ImportModal({
             )}
             {busy === 'importing' && (
               <p className={cn(importNoteCls, 'text-accent-ink')}>
-                Importing {repoSelected.size} screens — live captures can take a few minutes.
+                Importing {repoSelected.size} screens from the repository…
               </p>
             )}
             {error && <p className={errorNoteCls}>{error}</p>}
@@ -1292,12 +1290,8 @@ function GithubSection({
   const [pickerRepos, setPickerRepos] = useState<InstallationRepo[] | null>(null)
   const [repo, setRepo] = useState('')
   const [token, setToken] = useState('')
-  const [deployUrl, setDeployUrl] = useState('')
-  /* per-connection deploy-URL drafts, for connections created without one */
-  const [urlDrafts, setUrlDrafts] = useState<Record<string, string>>({})
   const [busy, setBusy] = useState<'connecting' | string | null>(null)
   const [error, setError] = useState<string | null>(null)
-  const [notice, setNotice] = useState<string | null>(null)
   const [forbidden, setForbidden] = useState(false)
 
   useEffect(() => {
@@ -1364,12 +1358,10 @@ function GithubSection({
       const conn = await api.connectGithub(canvasId, {
         repo: repo.trim(),
         token: token.trim(),
-        ...(deployUrl.trim() ? { deployUrl: deployUrl.trim() } : {}),
       })
       setConnections((c) => [conn, ...(c ?? [])])
       setRepo('')
       setToken('')
-      setDeployUrl('')
       setBusy(null)
       posthog.capture('github_repo_connected', { via: 'token' })
     } catch (e) {
@@ -1394,46 +1386,9 @@ function GithubSection({
     }
   }
 
-  async function resync(conn: GithubConnectionInfo) {
-    if (busy) return
-    setBusy(conn.id + ':resync')
-    setError(null)
-    setNotice(null)
-    try {
-      const result = await api.resyncGithub(canvasId, conn.id)
-      setNotice(
-        result.updated
-          ? `${result.updated} frame${result.updated === 1 ? '' : 's'} refreshed from ${conn.repo}`
-          : 'everything already matches the repo',
-      )
-      setBusy(null)
-    } catch (e) {
-      failed(e, 'resync failed')
-    }
-  }
-
   function disconnect(connId: string) {
     api.deleteGithubConnection(canvasId, connId).catch(console.error)
     setConnections((c) => c?.filter((x) => x.id !== connId) ?? null)
-  }
-
-  async function saveDeployUrl(conn: GithubConnectionInfo) {
-    const draft = (urlDrafts[conn.id] ?? '').trim()
-    if (busy || !draft) return
-    setBusy(conn.id + ':url')
-    setError(null)
-    try {
-      const updated = await api.setGithubDeployUrl(canvasId, conn.id, draft)
-      setConnections((c) => c?.map((x) => (x.id === conn.id ? updated : x)) ?? null)
-      setNotice(
-        conn.frames
-          ? 'deployment URL saved — hit ↻ Re-sync to capture placeholder screens for real'
-          : 'deployment URL saved — pages will now capture live',
-      )
-      setBusy(null)
-    } catch (e) {
-      failed(e, 'could not save the deployment URL')
-    }
   }
 
   if (forbidden) return null
@@ -1459,11 +1414,6 @@ function GithubSection({
             <Button size="sm" className="px-2.5 text-xs" disabled={!!busy} onClick={() => analyze(conn)}>
               {busy === conn.id ? 'Scanning…' : 'Find screens'}
             </Button>
-            {conn.frames > 0 && (
-              <Button size="sm" className="px-2.5 text-xs" disabled={!!busy} onClick={() => resync(conn)}>
-                {busy === conn.id + ':resync' ? 'Syncing…' : '↻ Re-sync'}
-              </Button>
-            )}
             <Button
               variant="bare"
               size="icon-sm"
@@ -1474,26 +1424,6 @@ function GithubSection({
               ✕
             </Button>
           </div>
-          {!conn.deployUrl && (
-            <div className="flex flex-col items-stretch gap-2 sm:flex-row">
-              <Input
-                className="flex-1 rounded-[10px] bg-paper font-mono text-[12px] focus:ring-0"
-                placeholder="Deployed URL — without it, pages import as placeholders"
-                value={urlDrafts[conn.id] ?? ''}
-                disabled={!!busy}
-                onChange={(e) => setUrlDrafts((d) => ({ ...d, [conn.id]: e.target.value }))}
-                onKeyDown={(e) => e.key === 'Enter' && saveDeployUrl(conn)}
-              />
-              <Button
-                size="sm"
-                className="justify-center px-2.5 text-xs"
-                disabled={!!busy || !(urlDrafts[conn.id] ?? '').trim()}
-                onClick={() => saveDeployUrl(conn)}
-              >
-                {busy === conn.id + ':url' ? 'Saving…' : 'Save URL'}
-              </Button>
-            </div>
-          )}
         </div>
       ))}
       {pickerRepos && (
@@ -1558,30 +1488,20 @@ function GithubSection({
                 setToken(e.target.value)
                 setError(null)
               }}
-            />
-          </div>
-          <div className="flex flex-col items-stretch gap-2 sm:flex-row">
-            <Input
-              className="flex-1 rounded-[10px] bg-paper font-mono text-[12px] focus:ring-0"
-              placeholder="Deployed URL for live captures (optional)"
-              value={deployUrl}
-              disabled={!!busy}
-              onChange={(e) => setDeployUrl(e.target.value)}
               onKeyDown={(e) => e.key === 'Enter' && connectRepo()}
             />
-            <Button
-              variant="primary"
-              className="justify-center"
-              disabled={!!busy || !repo.trim() || !token.trim()}
-              onClick={connectRepo}
-            >
-              {busy === 'connecting' ? 'Connecting…' : 'Connect'}
-            </Button>
           </div>
+          <Button
+            variant="primary"
+            className="justify-center self-start"
+            disabled={!!busy || !repo.trim() || !token.trim()}
+            onClick={connectRepo}
+          >
+            {busy === 'connecting' ? 'Connecting…' : 'Connect'}
+          </Button>
         </div>
       )}
       {error && <p className={errorNoteCls}>{error}</p>}
-      {notice && <p className={cn(importNoteCls, 'mt-0')}>{notice}</p>}
     </div>
   )
 }

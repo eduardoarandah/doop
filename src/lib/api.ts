@@ -44,7 +44,6 @@ export interface GithubConnectionInfo {
   canvasId: string
   repo: string
   branch: string
-  deployUrl: string | null
   createdAt: number
   lastSyncedAt: number | null
   /** how the connection authenticates: the GitHub App, or a pasted token */
@@ -64,8 +63,8 @@ export interface RepoScreen {
   sourcePath: string
   title: string
   dynamic: boolean
-  /** which lane supplies the pixels: live capture, repo HTML, or a placeholder */
-  source: 'live' | 'static' | 'placeholder'
+  /** where the pixels come from: repo HTML, or an outline placeholder */
+  source: 'static' | 'placeholder'
 }
 
 export interface RepoManifest {
@@ -196,10 +195,8 @@ export const api = {
   syncFlow: (canvasId: string) => req<SyncFlow>(`/api/canvases/${canvasId}/sync-flow`),
   /* GitHub repos connected as import sources */
   listGithubConnections: (canvasId: string) => req<GithubConnectionInfo[]>(`/api/canvases/${canvasId}/github`),
-  connectGithub: (
-    canvasId: string,
-    input: { repo: string; token?: string; pass?: string; branch?: string; deployUrl?: string },
-  ) => req<GithubConnectionInfo>(`/api/canvases/${canvasId}/github`, { method: 'POST', body: JSON.stringify(input) }),
+  connectGithub: (canvasId: string, input: { repo: string; token?: string; pass?: string; branch?: string }) =>
+    req<GithubConnectionInfo>(`/api/canvases/${canvasId}/github`, { method: 'POST', body: JSON.stringify(input) }),
   githubAppInfo: () => req<{ enabled: boolean; slug: string }>('/api/github/app'),
   startGithubInstall: (canvasId: string) =>
     req<{ url: string }>(`/api/canvases/${canvasId}/github/app/start`, { method: 'POST' }),
@@ -207,11 +204,6 @@ export const api = {
     req<InstallationRepo[]>(`/api/canvases/${canvasId}/github/app/repos?pass=${encodeURIComponent(pass)}`),
   deleteGithubConnection: (canvasId: string, connId: string) =>
     req(`/api/canvases/${canvasId}/github/${connId}`, { method: 'DELETE' }),
-  setGithubDeployUrl: (canvasId: string, connId: string, deployUrl: string) =>
-    req<GithubConnectionInfo>(`/api/canvases/${canvasId}/github/${connId}`, {
-      method: 'PATCH',
-      body: JSON.stringify({ deployUrl }),
-    }),
   analyzeGithub: (canvasId: string, connId: string) =>
     req<RepoManifest>(`/api/canvases/${canvasId}/github/${connId}/analyze`, { method: 'POST' }),
   importGithubScreens: (canvasId: string, connId: string, screens: RepoScreen[]) =>
@@ -219,11 +211,6 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ screens }),
     }),
-  resyncGithub: (canvasId: string, connId: string) =>
-    req<{ updated: number; failures: { route: string; error: string }[] }>(
-      `/api/canvases/${canvasId}/github/${connId}/resync`,
-      { method: 'POST' },
-    ),
   guidelineHistory: (canvasId: string, name: string) =>
     req<{ markdown: string; savedAt: number; savedBy: string }[]>(
       `/api/canvases/${canvasId}/guidelines/${encodeURIComponent(name)}/history`,
