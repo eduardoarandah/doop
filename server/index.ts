@@ -27,6 +27,7 @@ import {
   MAX_ASSET_BYTES,
 } from './assets.ts'
 import * as ingest from './ingest.ts'
+import * as github from './github.ts'
 import { seed } from './seed.ts'
 import * as allowance from './allowance.ts'
 import * as modelAccounts from './modelAccounts.ts'
@@ -824,6 +825,86 @@ app.delete('/api/canvases/:id/sync-keys/:keyId', async (req, res) => {
   if (!(await ingest.deleteSyncKey(req.params.id, req.params.keyId)))
     return res.status(404).json({ error: 'sync key not found' })
   res.json({ ok: true })
+})
+
+/* ---- GitHub import source: connect a repo, enumerate its screens, land the
+   selected ones as frames. Same durable-access rule as sync keys — the
+   stored PAT is a standing credential, so link-edit visitors must not be
+   able to create or exercise a connection. Tokens never leave the server. */
+
+app.get('/api/canvases/:id/github', async (req, res) => {
+  const c = requireDurableCanvas(req, res, req.params.id)
+  if (!c) return
+  const connections = await github.listConnections(c.id)
+  res.json(
+    connections.map((conn) => ({ ...github.connectionInfo(conn), frames: github.importedFrameCount(c, conn.id) })),
+  )
+})
+
+app.post('/api/canvases/:id/github', async (req, res) => {
+  const c = requireDurableCanvas(req, res, req.params.id)
+  if (!c) return
+  try {
+    const conn = await github.createConnection({
+      canvasId: c.id,
+      repo: String(req.body?.repo ?? ''),
+      token: String(req.body?.token ?? ''),
+      branch: typeof req.body?.branch === 'string' ? req.body.branch : undefined,
+      deployUrl: typeof req.body?.deployUrl === 'string' ? req.body.deployUrl : undefined,
+      createdBy: req.user!.id,
+    })
+    res.json({ ...github.connectionInfo(conn), frames: 0 })
+  } catch (e) {
+    res.status(400).json({ error: e instanceof Error ? e.message : 'could not connect the repository' })
+  }
+})
+
+app.delete('/api/canvases/:id/github/:connId', async (req, res) => {
+  if (!requireDurableCanvas(req, res, req.params.id)) return
+  if (!(await github.deleteConnection(req.params.id, req.params.connId)))
+    return res.status(404).json({ error: 'connection not found' })
+  res.json({ ok: true })
+})
+
+app.post('/api/canvases/:id/github/:connId/analyze', async (req, res) => {
+  const c = requireDurableCanvas(req, res, req.params.id)
+  if (!c) return
+  const conn = await github.getConnection(c.id, req.params.connId)
+  if (!conn) return res.status(404).json({ error: 'connection not found' })
+  try {
+    res.json(await github.analyzeConnection(conn))
+  } catch (e) {
+    res.status(400).json({ error: e instanceof Error ? e.message : 'repository analysis failed' })
+  }
+})
+
+app.post('/api/canvases/:id/github/:connId/import', async (req, res) => {
+  const c = requireDurableCanvas(req, res, req.params.id)
+  if (!c) return
+  const conn = await github.getConnection(c.id, req.params.connId)
+  if (!conn) return res.status(404).json({ error: 'connection not found' })
+  /* live captures open Chromium — same budget as website imports */
+  if (!takeImportSlot(req.user!.id)) return res.status(429).json({ error: 'too many imports — wait a minute' })
+  try {
+    const actor = actions.resolveActor({ name: req.user!.name, kind: 'user' })
+    res.json(await github.importScreens(conn, c, req.body?.screens, actor))
+  } catch (e) {
+    res.status(400).json({ error: e instanceof Error ? e.message : 'import failed' })
+  }
+})
+
+app.post('/api/canvases/:id/github/:connId/resync', async (req, res) => {
+  const c = requireDurableCanvas(req, res, req.params.id)
+  if (!c) return
+  const conn = await github.getConnection(c.id, req.params.connId)
+  if (!conn) return res.status(404).json({ error: 'connection not found' })
+  if (!takeImportSlot(req.user!.id)) return res.status(429).json({ error: 'too many imports — wait a minute' })
+  try {
+    const actor = actions.resolveActor({ name: req.user!.name, kind: 'user' })
+    res.json(await github.resyncConnection(conn, c, actor))
+  } catch (e) {
+    res.status(400).json({ error: e instanceof Error ? e.message : 'resync failed' })
+  }
 })
 
 /* upsert a named design doc; empty markdown deletes it (same permission

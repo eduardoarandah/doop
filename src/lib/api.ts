@@ -37,6 +37,42 @@ export interface SyncFlow {
   edges: { fromFrameId: string; toFrameId: string; count: number; lastAt: number }[]
 }
 
+/** A GitHub repo connected as an import source. The server keeps the token;
+ *  clients only ever see connection metadata. */
+export interface GithubConnectionInfo {
+  id: string
+  canvasId: string
+  repo: string
+  branch: string
+  deployUrl: string | null
+  createdAt: number
+  lastSyncedAt: number | null
+  /** frames on the canvas imported through this connection */
+  frames: number
+}
+
+export interface RepoScreen {
+  kind: 'page' | 'story' | 'static'
+  route: string
+  sourcePath: string
+  title: string
+  dynamic: boolean
+  /** which lane supplies the pixels: live capture, repo HTML, or a placeholder */
+  source: 'live' | 'static' | 'placeholder'
+}
+
+export interface RepoManifest {
+  connection: Omit<GithubConnectionInfo, 'frames'>
+  framework: string | null
+  screens: RepoScreen[]
+  truncated: boolean
+}
+
+export interface GithubImportResult {
+  frames: Frame[]
+  failures: { route: string; error: string }[]
+}
+
 export interface DiscoveredPage {
   url: string
   title: string
@@ -151,6 +187,24 @@ export const api = {
   deleteSyncKey: (canvasId: string, keyId: string) =>
     req(`/api/canvases/${canvasId}/sync-keys/${keyId}`, { method: 'DELETE' }),
   syncFlow: (canvasId: string) => req<SyncFlow>(`/api/canvases/${canvasId}/sync-flow`),
+  /* GitHub repos connected as import sources */
+  listGithubConnections: (canvasId: string) => req<GithubConnectionInfo[]>(`/api/canvases/${canvasId}/github`),
+  connectGithub: (canvasId: string, input: { repo: string; token: string; branch?: string; deployUrl?: string }) =>
+    req<GithubConnectionInfo>(`/api/canvases/${canvasId}/github`, { method: 'POST', body: JSON.stringify(input) }),
+  deleteGithubConnection: (canvasId: string, connId: string) =>
+    req(`/api/canvases/${canvasId}/github/${connId}`, { method: 'DELETE' }),
+  analyzeGithub: (canvasId: string, connId: string) =>
+    req<RepoManifest>(`/api/canvases/${canvasId}/github/${connId}/analyze`, { method: 'POST' }),
+  importGithubScreens: (canvasId: string, connId: string, screens: RepoScreen[]) =>
+    req<GithubImportResult>(`/api/canvases/${canvasId}/github/${connId}/import`, {
+      method: 'POST',
+      body: JSON.stringify({ screens }),
+    }),
+  resyncGithub: (canvasId: string, connId: string) =>
+    req<{ updated: number; failures: { route: string; error: string }[] }>(
+      `/api/canvases/${canvasId}/github/${connId}/resync`,
+      { method: 'POST' },
+    ),
   guidelineHistory: (canvasId: string, name: string) =>
     req<{ markdown: string; savedAt: number; savedBy: string }[]>(
       `/api/canvases/${canvasId}/guidelines/${encodeURIComponent(name)}/history`,

@@ -105,6 +105,30 @@ export const syncEdges = pgTable(
   (t) => [primaryKey({ columns: [t.keyId, t.fromPage, t.toPage] })],
 )
 
+/** A GitHub repo connected to a canvas as an import source. The fine-grained
+ *  PAT is stored server-side only and never reaches canvas members — API
+ *  responses carry connection metadata, not the token. Revocation = row
+ *  deletion (plus revoking the PAT on GitHub). Frames imported through a
+ *  connection carry a marker meta in their HTML (see server/github.ts), same
+ *  provenance pattern as design-sync frames — no frame column. */
+export const githubConnections = pgTable(
+  'github_connections',
+  {
+    id: text('id').primaryKey(),
+    canvasId: text('canvas_id').notNull(),
+    /** "owner/name" */
+    repo: text('repo').notNull(),
+    branch: text('branch').notNull(),
+    token: text('token').notNull(),
+    /** live deployment of this repo; enables the capture lane */
+    deployUrl: text('deploy_url'),
+    createdBy: text('created_by').notNull(),
+    createdAt: bigint('created_at', { mode: 'number' }).notNull(),
+    lastSyncedAt: bigint('last_synced_at', { mode: 'number' }),
+  },
+  (t) => [index('github_connections_canvas_idx').on(t.canvasId)],
+)
+
 export const tasks = pgTable(
   'tasks',
   {

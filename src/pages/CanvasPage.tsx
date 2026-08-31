@@ -1,7 +1,16 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useStore } from '../lib/store'
 import { connect, disconnect, sendWs } from '../lib/ws'
-import { api, ApiError, type CanvasMember, type DiscoveredSite, type SyncKeyInfo } from '../lib/api'
+import {
+  api,
+  ApiError,
+  type CanvasMember,
+  type DiscoveredSite,
+  type GithubConnectionInfo,
+  type RepoManifest,
+  type RepoScreen,
+  type SyncKeyInfo,
+} from '../lib/api'
 import { navigate } from '../App'
 import { Logo } from '../components/Logo'
 import { ensureTab } from '../lib/desktop'
@@ -517,6 +526,11 @@ function ImportModal({
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [busy, setBusy] = useState<'discovering' | 'importing' | null>(null)
   const [error, setError] = useState<string | null>(null)
+  /* a connected repo's screen manifest under review — the modal's third view */
+  const [repoReview, setRepoReview] = useState<{ connection: GithubConnectionInfo; manifest: RepoManifest } | null>(
+    null,
+  )
+  const [repoSelected, setRepoSelected] = useState<Set<string>>(new Set())
 
   function errorMessage(caught: unknown, fallback: string) {
     if (caught instanceof ApiError) return String(caught.body.error ?? fallback)
@@ -595,12 +609,172 @@ function ImportModal({
     })
   }
 
+  /* screens can share a route across kinds (a page and its committed dist
+     HTML) — key rows by kind + route */
+  const screenKey = (s: RepoScreen) => `${s.kind}|${s.route}`
+
+  function openRepoReview(connection: GithubConnectionInfo, manifest: RepoManifest) {
+    setRepoReview({ connection, manifest })
+    setRepoSelected(new Set(manifest.screens.map(screenKey)))
+    setError(null)
+  }
+
+  function toggleScreen(key: string) {
+    setRepoSelected((current) => {
+      const next = new Set(current)
+      if (next.has(key)) next.delete(key)
+      else next.add(key)
+      return next
+    })
+  }
+
+  async function importRepoScreens() {
+    if (!repoReview || !repoSelected.size || busy) return
+    setBusy('importing')
+    setError(null)
+    const screens = repoReview.manifest.screens.filter((s) => repoSelected.has(screenKey(s)))
+    try {
+      const result = await api.importGithubScreens(canvasId, repoReview.connection.id, screens)
+      if (!result.frames.length) {
+        const reason = result.failures[0]?.error
+        setError(reason ? `No screens could be imported — ${reason}` : 'No screens could be imported')
+        setBusy(null)
+        return
+      }
+      posthog.capture('github_screens_imported', {
+        requested_count: screens.length,
+        imported_count: result.frames.length,
+        failed_count: result.failures.length,
+      })
+      onDone(
+        result.frames.map((frame) => frame.id),
+        result.failures.length,
+      )
+    } catch (e) {
+      setError(errorMessage(e, 'repository import failed'))
+      setBusy(null)
+    }
+  }
+
   const selectedCount = selected.size
+  const laneLabel: Record<RepoScreen['source'], string> = {
+    live: 'live capture',
+    static: 'from repo',
+    placeholder: 'placeholder',
+  }
 
   return (
     <Modal size="lg" onClose={() => !busy && onClose()}>
       <>
-        {!discovery ? (
+        {repoReview ? (
+          <>
+            <div className="flex flex-col items-start justify-between gap-2.5 sm:flex-row sm:gap-6">
+              <div className="flex flex-col gap-[5px]">
+                <ModalEyebrow>Review before import</ModalEyebrow>
+                <ModalTitle>Choose screens</ModalTitle>
+              </div>
+              <Badge className="max-w-full overflow-hidden text-ellipsis rounded-full bg-paper px-[9px] py-[5px] text-[10.5px] sm:max-w-[240px]">
+                {repoReview.connection.repo}@{repoReview.connection.branch}
+              </Badge>
+            </div>
+            <ModalLede>
+              {repoReview.manifest.screens.length} {repoReview.manifest.screens.length === 1 ? 'screen' : 'screens'}{' '}
+              found
+              {repoReview.manifest.framework ? ` in a ${repoReview.manifest.framework} app` : ''}. Pages capture from
+              the live deployment, repo HTML imports directly, and the rest hold their place as placeholders until the
+              sync snippet fills them in.
+            </ModalLede>
+            <div className="mt-5 flex items-center justify-between px-[2px] pb-[9px]">
+              <b className="text-[12px] text-ink-soft">
+                {repoSelected.size} of {repoReview.manifest.screens.length} selected
+              </b>
+              <span className="flex gap-3">
+                <Button
+                  variant="bare"
+                  size="sm"
+                  className="p-0 font-mono text-[10.5px] hover:bg-transparent hover:text-accent-ink"
+                  disabled={!!busy}
+                  onClick={() => setRepoSelected(new Set(repoReview.manifest.screens.map(screenKey)))}
+                >
+                  Select all
+                </Button>
+                <Button
+                  variant="bare"
+                  size="sm"
+                  className="p-0 font-mono text-[10.5px] hover:bg-transparent hover:text-accent-ink"
+                  disabled={!!busy}
+                  onClick={() => setRepoSelected(new Set())}
+                >
+                  Clear
+                </Button>
+              </span>
+            </div>
+            <div
+              className={cn(
+                'max-h-[calc(100dvh-390px)] overflow-y-auto rounded-[11px] border border-line bg-paper transition-opacity sm:max-h-[min(350px,calc(100vh-390px))]',
+                busy && 'opacity-[0.58]',
+              )}
+              role="group"
+              aria-label="Screens to import"
+            >
+              {repoReview.manifest.screens.map((screen, index) => (
+                <label
+                  className="relative grid min-h-[58px] cursor-pointer grid-cols-[20px_24px_minmax(0,1fr)_auto] items-center gap-2.5 border-b border-line bg-surface px-3 py-[9px] first:rounded-t-[10px] last:rounded-t-none last:rounded-b-[10px] last:border-b-0 hover:bg-[#fbfbfc]"
+                  key={screenKey(screen)}
+                >
+                  <Checkbox
+                    checked={repoSelected.has(screenKey(screen))}
+                    disabled={!!busy}
+                    onChange={() => toggleScreen(screenKey(screen))}
+                  />
+                  <span className="font-mono text-[9.5px] text-ink-faint">{String(index + 1).padStart(2, '0')}</span>
+                  <span className="min-w-0">
+                    <b className="block overflow-hidden whitespace-nowrap text-ellipsis text-[12.5px] text-ink">
+                      {screen.title}
+                    </b>
+                    <span className="mt-[3px] block overflow-hidden whitespace-nowrap text-ellipsis font-mono text-[10px] text-ink-faint">
+                      {screen.route}
+                    </span>
+                  </span>
+                  <span
+                    className={cn(
+                      'rounded-full px-2 py-[3px] font-mono text-[8.5px] font-semibold uppercase tracking-[0.08em]',
+                      screen.source === 'placeholder' ? 'bg-paper-deep text-ink-faint' : 'bg-brand/10 text-accent-ink',
+                    )}
+                  >
+                    {laneLabel[screen.source]}
+                  </span>
+                </label>
+              ))}
+            </div>
+            {repoReview.manifest.truncated && (
+              <p className={importNoteCls}>The repository listing was cut short — very large repos show a subset.</p>
+            )}
+            {busy === 'importing' && (
+              <p className={cn(importNoteCls, 'text-accent-ink')}>
+                Importing {repoSelected.size} screens — live captures can take a few minutes.
+              </p>
+            )}
+            {error && <p className={errorNoteCls}>{error}</p>}
+            <ModalActions className="justify-between">
+              <Button
+                variant="ghost"
+                disabled={!!busy}
+                onClick={() => {
+                  setRepoReview(null)
+                  setError(null)
+                }}
+              >
+                ← Back
+              </Button>
+              <Button variant="primary" disabled={!!busy || !repoSelected.size} onClick={importRepoScreens}>
+                {busy === 'importing'
+                  ? `Importing ${repoSelected.size}…`
+                  : `⤓ Import ${repoSelected.size} ${repoSelected.size === 1 ? 'screen' : 'screens'}`}
+              </Button>
+            </ModalActions>
+          </>
+        ) : !discovery ? (
           <>
             <div className="flex flex-col gap-[5px]">
               <ModalEyebrow>Website capture</ModalEyebrow>
@@ -666,6 +840,7 @@ function ImportModal({
               </Button>
             </ModalActions>
             <SyncKeysSection canvasId={canvasId} />
+            <GithubSection canvasId={canvasId} onReview={openRepoReview} />
           </>
         ) : (
           <>
@@ -1078,6 +1253,187 @@ function SyncKeysSection({ canvasId }: { canvasId: string }) {
           Create key
         </Button>
       </div>
+    </div>
+  )
+}
+
+/* GitHub as an import source: connect a repo with a fine-grained token, let
+   doop enumerate its screens, and review them before anything lands. The
+   token stays on the server — this section only ever sees connection
+   metadata. Same durable-access rule as sync keys. */
+function GithubSection({
+  canvasId,
+  onReview,
+}: {
+  canvasId: string
+  onReview: (connection: GithubConnectionInfo, manifest: RepoManifest) => void
+}) {
+  const [connections, setConnections] = useState<GithubConnectionInfo[] | null>(null)
+  const [repo, setRepo] = useState('')
+  const [token, setToken] = useState('')
+  const [deployUrl, setDeployUrl] = useState('')
+  const [busy, setBusy] = useState<'connecting' | string | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const [notice, setNotice] = useState<string | null>(null)
+  const [forbidden, setForbidden] = useState(false)
+
+  useEffect(() => {
+    api
+      .listGithubConnections(canvasId)
+      .then(setConnections)
+      .catch((e) => {
+        if (e instanceof ApiError && e.status === 403) setForbidden(true)
+        setConnections([])
+      })
+  }, [canvasId])
+
+  function failed(caught: unknown, fallback: string) {
+    setError(caught instanceof ApiError ? String(caught.body.error ?? fallback) : fallback)
+    setBusy(null)
+  }
+
+  async function connectRepo() {
+    if (busy || !repo.trim() || !token.trim()) return
+    setBusy('connecting')
+    setError(null)
+    try {
+      const conn = await api.connectGithub(canvasId, {
+        repo: repo.trim(),
+        token: token.trim(),
+        ...(deployUrl.trim() ? { deployUrl: deployUrl.trim() } : {}),
+      })
+      setConnections((c) => [conn, ...(c ?? [])])
+      setRepo('')
+      setToken('')
+      setDeployUrl('')
+      setBusy(null)
+      posthog.capture('github_repo_connected')
+    } catch (e) {
+      failed(e, 'could not connect the repository')
+    }
+  }
+
+  async function analyze(conn: GithubConnectionInfo) {
+    if (busy) return
+    setBusy(conn.id)
+    setError(null)
+    try {
+      const manifest = await api.analyzeGithub(canvasId, conn.id)
+      posthog.capture('github_screens_found', {
+        screen_count: manifest.screens.length,
+        framework: manifest.framework,
+      })
+      setBusy(null)
+      onReview(conn, manifest)
+    } catch (e) {
+      failed(e, 'repository analysis failed')
+    }
+  }
+
+  async function resync(conn: GithubConnectionInfo) {
+    if (busy) return
+    setBusy(conn.id + ':resync')
+    setError(null)
+    setNotice(null)
+    try {
+      const result = await api.resyncGithub(canvasId, conn.id)
+      setNotice(
+        result.updated
+          ? `${result.updated} frame${result.updated === 1 ? '' : 's'} refreshed from ${conn.repo}`
+          : 'everything already matches the repo',
+      )
+      setBusy(null)
+    } catch (e) {
+      failed(e, 'resync failed')
+    }
+  }
+
+  function disconnect(connId: string) {
+    api.deleteGithubConnection(canvasId, connId).catch(console.error)
+    setConnections((c) => c?.filter((x) => x.id !== connId) ?? null)
+  }
+
+  if (forbidden) return null
+  return (
+    <div className="mt-3.5 flex flex-col gap-2.5 border-t border-line-soft pt-3.5">
+      <h3 className="text-[13px] font-semibold text-ink">Or connect a GitHub repo</h3>
+      <Note>
+        Doop reads the repo's routing conventions and lists its screens for review — nothing lands until you pick. Use a
+        fine-grained token scoped to the one repo, read-only contents. The token never leaves the server.
+      </Note>
+      {(connections ?? []).map((conn) => (
+        <div key={conn.id} className="flex items-center gap-2 text-[13px]">
+          <b className="min-w-0 overflow-hidden text-ellipsis whitespace-nowrap font-semibold">
+            {conn.repo}
+            <span className="font-normal text-ink-faint">@{conn.branch}</span>
+          </b>
+          <Note className="mr-auto shrink-0">
+            {conn.frames ? `${conn.frames} screen${conn.frames === 1 ? '' : 's'}` : 'nothing imported yet'}
+          </Note>
+          <Button size="sm" className="px-2.5 text-xs" disabled={!!busy} onClick={() => analyze(conn)}>
+            {busy === conn.id ? 'Scanning…' : 'Find screens'}
+          </Button>
+          {conn.frames > 0 && (
+            <Button size="sm" className="px-2.5 text-xs" disabled={!!busy} onClick={() => resync(conn)}>
+              {busy === conn.id + ':resync' ? 'Syncing…' : '↻ Re-sync'}
+            </Button>
+          )}
+          <Button
+            variant="bare"
+            size="icon-sm"
+            className="-mr-1.5 text-[13px] hover:bg-brand/10 hover:text-accent-ink"
+            title="Disconnect this repository"
+            onClick={() => disconnect(conn.id)}
+          >
+            ✕
+          </Button>
+        </div>
+      ))}
+      <div className="flex flex-col gap-2">
+        <div className="flex flex-col items-stretch gap-2 sm:flex-row">
+          <Input
+            className="flex-1 rounded-[10px] bg-paper font-mono text-[12px] focus:ring-0"
+            placeholder="owner/repository"
+            value={repo}
+            disabled={!!busy}
+            onChange={(e) => {
+              setRepo(e.target.value)
+              setError(null)
+            }}
+          />
+          <Input
+            className="flex-1 rounded-[10px] bg-paper font-mono text-[12px] focus:ring-0"
+            type="password"
+            placeholder="Fine-grained token (github_pat_…)"
+            value={token}
+            disabled={!!busy}
+            onChange={(e) => {
+              setToken(e.target.value)
+              setError(null)
+            }}
+          />
+        </div>
+        <div className="flex flex-col items-stretch gap-2 sm:flex-row">
+          <Input
+            className="flex-1 rounded-[10px] bg-paper font-mono text-[12px] focus:ring-0"
+            placeholder="Deployed URL for live captures (optional)"
+            value={deployUrl}
+            disabled={!!busy}
+            onChange={(e) => setDeployUrl(e.target.value)}
+            onKeyDown={(e) => e.key === 'Enter' && connectRepo()}
+          />
+          <Button
+            variant="primary"
+            className="justify-center"
+            disabled={!!busy || !repo.trim() || !token.trim()}
+            onClick={connectRepo}
+          >
+            {busy === 'connecting' ? 'Connecting…' : 'Connect'}
+          </Button>
+        </div>
+      </div>
+      {error && <p className={errorNoteCls}>{error}</p>}
+      {notice && <p className={cn(importNoteCls, 'mt-0')}>{notice}</p>}
     </div>
   )
 }

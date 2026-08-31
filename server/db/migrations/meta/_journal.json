@@ -43,6 +43,13 @@
       "when": 1787770420646,
       "tag": "0005_sync_flow",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1788136083709,
+      "tag": "0006_known_nightshade",
+      "breakpoints": true
     }
   ]
 }
