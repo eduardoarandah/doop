@@ -11,7 +11,6 @@ import { recordUpdate } from '../lib/history'
 import { snapFrame } from '../lib/snap'
 import { FrameContextMenu } from './FrameContextMenu'
 import { ContextMenu, ContextMenuTrigger } from './ui/context-menu'
-import { BrainIcon } from './BrainIcon'
 import { AGENT_ROLES, DEFAULT_ROLE_ID, mentionedRole, roleName } from '../../shared/agents'
 import { posthog } from '../lib/posthog'
 import { isResidentLimit } from './TeamAllowance'
@@ -433,7 +432,6 @@ export const FrameView = memo(function FrameView({ frame, raster }: { frame: Fra
                 ))}
             </span>
           </div>
-          <PinToMemory frame={frame} />
 
           <div
             className={cn(
@@ -700,32 +698,6 @@ export const FrameView = memo(function FrameView({ frame, raster }: { frame: Fra
     </ContextMenu>
   )
 })
-
-/** Quick path into Memory: the brain on the frame chrome pins this design
- *  as a style reference (same action as the context menu, less hidden). */
-function PinToMemory({ frame }: { frame: Frame }) {
-  const [state, setState] = useState<'idle' | 'pinned' | 'error'>('idle')
-  return (
-    <Tooltip label="Add to design memory — will be used as reference" side="top" align="end">
-      <Button
-        variant="ghost"
-        size="sm"
-        className="absolute -top-[27px] right-0 z-[6] hidden origin-bottom-right whitespace-nowrap rounded-lg bg-white px-[5px] py-[3px] text-[11px] leading-none text-ink-soft shadow-[0_1px_2px_rgba(0,0,0,0.07)] [transform:scale(min(calc(1/var(--zoom,1)),2.4))] hover:border-brand hover:bg-white hover:text-accent-ink sm:inline-flex"
-        onPointerDown={(e) => e.stopPropagation()}
-        onClick={(e) => {
-          e.stopPropagation()
-          api
-            .pinReference(frame.canvasId, frame.id)
-            .then(() => setState('pinned'))
-            .catch(() => setState('error')) // already pinned or at the cap
-          window.setTimeout(() => setState('idle'), 1600)
-        }}
-      >
-        {state === 'pinned' ? '✓ in Memory' : state === 'error' ? 'already pinned' : <BrainIcon />}
-      </Button>
-    </Tooltip>
-  )
-}
 
 function CommentComposer({
   onSubmit,
