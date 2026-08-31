@@ -980,7 +980,15 @@ app.post('/api/canvases/:id/github/:connId/import', async (req, res) => {
        every other agent task, billed to the same person) */
     const sketch = !!(await pickModel(req.user!.id))
     const designSystem = sketch && req.body?.design_system !== false
-    const { pending, ...result } = await github.importScreens(conn, c, req.body?.screens, actor, { sketch })
+    /* design-system-only import is the headline flow now — screens optional */
+    const rawScreens = Array.isArray(req.body?.screens) ? (req.body.screens as unknown[]) : []
+    if (!rawScreens.length && !designSystem)
+      return res.status(400).json({ error: 'pick components or screens, or enable the design-system extraction' })
+    let result: { frames: unknown[]; failures: unknown[] } = { frames: [], failures: [] }
+    let pending: Parameters<typeof scheduleReconstructions>[1] = []
+    if (rawScreens.length) {
+      ;({ pending, ...result } = await github.importScreens(conn, c, rawScreens, actor, { sketch }))
+    }
     scheduleReconstructions(conn, pending, actor, req.user!.id, { designSystem })
     res.json(result)
   } catch (e) {

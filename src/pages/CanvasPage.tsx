@@ -513,7 +513,12 @@ export function CanvasPage({ canvasId }: { canvasId: string }) {
             setShowImport(false)
             setView('canvas')
             select(frameIds[0] ?? null)
-            const imported = frameIds.length === 1 ? '1 page imported' : `${frameIds.length} pages imported`
+            const imported =
+              frameIds.length === 0
+                ? 'Doop is importing the design system — watch the canvas'
+                : frameIds.length === 1
+                  ? '1 item imported'
+                  : `${frameIds.length} items imported`
             showToast(failedCount ? `${imported} · ${failedCount} failed` : imported)
           }}
         />
@@ -555,6 +560,7 @@ function ImportModal({
   )
   const [repoSelected, setRepoSelected] = useState<Set<string>>(new Set())
   const [extractSystem, setExtractSystem] = useState(true)
+  const [showPages, setShowPages] = useState(false)
 
   function errorMessage(caught: unknown, fallback: string) {
     if (caught instanceof ApiError) return String(caught.body.error ?? fallback)
@@ -639,7 +645,11 @@ function ImportModal({
 
   function openRepoReview(connection: GithubConnectionInfo, manifest: RepoManifest) {
     setRepoReview({ connection, manifest })
-    setRepoSelected(new Set(manifest.screens.map(screenKey)))
+    /* components are the default import; pages stay opt-in behind a toggle */
+    setRepoSelected(
+      new Set(manifest.screens.filter((s) => s.kind === 'component' || s.kind === 'story').map(screenKey)),
+    )
+    setShowPages(false)
     setError(null)
   }
 
@@ -653,13 +663,13 @@ function ImportModal({
   }
 
   async function importRepoScreens() {
-    if (!repoReview || !repoSelected.size || busy) return
+    if (!repoReview || busy || (!repoSelected.size && !extractSystem)) return
     setBusy('importing')
     setError(null)
     const screens = repoReview.manifest.screens.filter((s) => repoSelected.has(screenKey(s)))
     try {
       const result = await api.importGithubScreens(canvasId, repoReview.connection.id, screens, extractSystem)
-      if (!result.frames.length) {
+      if (!result.frames.length && screens.length) {
         const reason = result.failures[0]?.error
         setError(reason ? `No screens could be imported — ${reason}` : 'No screens could be imported')
         setBusy(null)
@@ -687,6 +697,12 @@ function ImportModal({
   }
   const kindLabel = (s: RepoScreen) =>
     s.kind === 'component' ? 'component' : s.kind === 'story' ? 'story' : laneLabel[s.source]
+  const KIND_ORDER: Record<RepoScreen['kind'], number> = { component: 0, story: 1, static: 2, page: 3 }
+  const allScreens = repoReview?.manifest.screens ?? []
+  const pageCount = allScreens.filter((s) => s.kind === 'page').length
+  const visibleScreens = allScreens
+    .filter((s) => showPages || s.kind !== 'page')
+    .sort((a, b) => KIND_ORDER[a.kind] - KIND_ORDER[b.kind])
 
   return (
     <Modal size="lg" onClose={() => !busy && onClose()}>
@@ -696,21 +712,27 @@ function ImportModal({
             <div className="flex flex-col items-start justify-between gap-2.5 sm:flex-row sm:gap-6">
               <div className="flex flex-col gap-[5px]">
                 <ModalEyebrow>Review before import</ModalEyebrow>
-                <ModalTitle>Choose screens</ModalTitle>
+                <ModalTitle>Import the design system</ModalTitle>
               </div>
               <Badge className="max-w-full overflow-hidden text-ellipsis rounded-full bg-paper px-[9px] py-[5px] text-[10.5px] sm:max-w-[240px]">
                 {repoReview.connection.repo}@{repoReview.connection.branch}
               </Badge>
             </div>
             <ModalLede>
-              {repoReview.manifest.screens.length} {repoReview.manifest.screens.length === 1 ? 'screen' : 'screens'}{' '}
-              found
-              {repoReview.manifest.framework ? ` in a ${repoReview.manifest.framework} app` : ''}. A one-time import:
-              repo HTML lands as frames, and screens that only exist as code land as outlines to design into.
+              {repoReview.manifest.framework ? `A ${repoReview.manifest.framework} app. ` : ''}Doop distills the repo's
+              design system into a style guide pinned to this canvas — every agent follows it from then on. Components
+              come along as sketched library cards; whole pages are optional.
             </ModalLede>
-            <div className="mt-5 flex items-center justify-between px-[2px] pb-[9px]">
+            <CheckboxCard
+              checked={extractSystem}
+              disabled={!!busy}
+              onChange={setExtractSystem}
+              title="Extract the design system into a style guide"
+              description="Palette, type and spacing from the repo's theme — pinned to the canvas, followed by every agent."
+            />
+            <div className="mt-4 flex items-center justify-between px-[2px] pb-[9px]">
               <b className="text-[12px] text-ink-soft">
-                {repoSelected.size} of {repoReview.manifest.screens.length} selected
+                {repoSelected.size} of {visibleScreens.length} selected
               </b>
               <span className="flex gap-3">
                 <Button
@@ -718,7 +740,7 @@ function ImportModal({
                   size="sm"
                   className="p-0 font-mono text-[10.5px] hover:bg-transparent hover:text-accent-ink"
                   disabled={!!busy}
-                  onClick={() => setRepoSelected(new Set(repoReview.manifest.screens.map(screenKey)))}
+                  onClick={() => setRepoSelected(new Set(visibleScreens.map(screenKey)))}
                 >
                   Select all
                 </Button>
@@ -741,7 +763,7 @@ function ImportModal({
               role="group"
               aria-label="Screens to import"
             >
-              {repoReview.manifest.screens.map((screen, index) => (
+              {visibleScreens.map((screen, index) => (
                 <label
                   className="relative grid min-h-[58px] cursor-pointer grid-cols-[20px_24px_minmax(0,1fr)_auto] items-center gap-2.5 border-b border-line bg-surface px-3 py-[9px] first:rounded-t-[10px] last:rounded-t-none last:rounded-b-[10px] last:border-b-0 hover:bg-[#fbfbfc]"
                   key={screenKey(screen)}
@@ -771,19 +793,23 @@ function ImportModal({
                 </label>
               ))}
             </div>
-            <CheckboxCard
-              checked={extractSystem}
-              disabled={!!busy}
-              onChange={setExtractSystem}
-              title="Extract the design system into a style guide"
-              description="Palette, type and spacing from the repo's theme — pinned to the canvas, followed by every agent."
-            />
+            {pageCount > 0 && (
+              <Button
+                variant="bare"
+                size="sm"
+                className="mt-2 self-start p-0 font-mono text-[10.5px] text-ink-faint hover:bg-transparent hover:text-accent-ink"
+                disabled={!!busy}
+                onClick={() => setShowPages((v) => !v)}
+              >
+                {showPages ? 'hide pages' : `show ${pageCount} page${pageCount === 1 ? '' : 's'} (optional)`}
+              </Button>
+            )}
             {repoReview.manifest.truncated && (
               <p className={importNoteCls}>The repository listing was cut short — very large repos show a subset.</p>
             )}
             {busy === 'importing' && (
               <p className={cn(importNoteCls, 'text-accent-ink')}>
-                Importing {repoSelected.size} screens from the repository…
+                Doop is importing — the style guide and sketches fill in on the canvas…
               </p>
             )}
             {error && <p className={errorNoteCls}>{error}</p>}
@@ -798,10 +824,20 @@ function ImportModal({
               >
                 ← Back
               </Button>
-              <Button variant="primary" disabled={!!busy || !repoSelected.size} onClick={importRepoScreens}>
+              <Button
+                variant="primary"
+                disabled={!!busy || (!repoSelected.size && !extractSystem)}
+                onClick={importRepoScreens}
+              >
                 {busy === 'importing'
-                  ? `Importing ${repoSelected.size}…`
-                  : `⤓ Import ${repoSelected.size} ${repoSelected.size === 1 ? 'screen' : 'screens'}`}
+                  ? 'Importing…'
+                  : [
+                      extractSystem ? 'design system' : '',
+                      repoSelected.size ? `${repoSelected.size} ${repoSelected.size === 1 ? 'item' : 'items'}` : '',
+                    ]
+                      .filter(Boolean)
+                      .join(' + ')
+                      .replace(/^./, (c) => '⤓ Import ' + c)}
               </Button>
             </ModalActions>
           </>
@@ -1438,7 +1474,7 @@ function GithubSection({
               {conn.frames ? `${conn.frames} screen${conn.frames === 1 ? '' : 's'}` : 'nothing imported yet'}
             </Note>
             <Button size="sm" className="px-2.5 text-xs" disabled={!!busy} onClick={() => analyze(conn)}>
-              {busy === conn.id ? 'Scanning…' : 'Find screens'}
+              {busy === conn.id ? 'Analyzing…' : 'Analyze'}
             </Button>
             <Button
               variant="bare"
