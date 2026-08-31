@@ -36,6 +36,26 @@ const EL_TOOLBAR_BTN = 'rounded-[7px] px-2 py-1 text-xs'
 const DUP_CURSOR_SVG = `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24"><path d="M9 8v12.6l3.4-2.9 2 4.6 2.3-1-2-4.5 4.5-.4z" fill="#000" stroke="#fff" stroke-width="1.2"/><path d="M4 3v12.6l3.4-2.9 2 4.6 2.3-1-2-4.5 4.5-.4z" fill="#000" stroke="#fff" stroke-width="1.2"/></svg>`
 const DUP_CURSOR = `url("data:image/svg+xml;charset=utf-8,${encodeURIComponent(DUP_CURSOR_SVG)}") 4 3, copy`
 
+/** True while ⌥⇧ is held. The duplicate cursor must be showing BEFORE the
+ *  drag starts: Chromium freezes the effective cursor for the duration of a
+ *  pointer drag, so a swap at drag-start never paints. */
+function useDupModifier(): boolean {
+  const [held, setHeld] = useState(false)
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => setHeld(e.altKey && e.shiftKey)
+    const reset = () => setHeld(false)
+    window.addEventListener('keydown', onKey)
+    window.addEventListener('keyup', onKey)
+    window.addEventListener('blur', reset)
+    return () => {
+      window.removeEventListener('keydown', onKey)
+      window.removeEventListener('keyup', onKey)
+      window.removeEventListener('blur', reset)
+    }
+  }, [])
+  return held
+}
+
 /** Re-render the iframe at most every `ms` — keeps streaming chunk updates smooth. */
 function useThrottledValue<T>(value: T, ms: number): T {
   const [v, setV] = useState(value)
@@ -80,8 +100,9 @@ export const FrameView = memo(function FrameView({ frame, raster }: { frame: Fra
   const editors = Object.values(presences).filter((p) => p.activeFrameId === frame.id && p.clientId !== me)
   const [dragging, setDragging] = useState(false)
   /* ⌥⇧-drag (Figma-style duplicate): the original stays behind, the copy
-     rides the cursor — shown with a doubled cursor while it lasts */
+     rides the cursor — the doubled cursor shows from the moment ⌥⇧ is held */
   const [duping, setDuping] = useState(false)
+  const dupKeyHeld = useDupModifier()
   const [editing, setEditing] = useState(false)
   /* after exiting edit mode, hold renders until the final serialized HTML
      lands in the store — otherwise a stale post would morph the edit away */
@@ -432,7 +453,7 @@ export const FrameView = memo(function FrameView({ frame, raster }: { frame: Fra
               'absolute -top-[26px] left-0 right-0 flex origin-bottom-left cursor-grab select-none items-center gap-2 whitespace-nowrap text-[12px] font-semibold text-ink-soft',
               COUNTER_SCALE,
             )}
-            style={duping ? { cursor: DUP_CURSOR } : undefined}
+            style={duping || dupKeyHeld ? { cursor: DUP_CURSOR } : undefined}
             onPointerDown={(e) => startDrag(e, 'move', false, true)}
           >
             {isSyncedFrame(frame.html) && (
@@ -492,7 +513,7 @@ export const FrameView = memo(function FrameView({ frame, raster }: { frame: Fra
               stream && 'border-transparent outline-none',
               dragging && 'cursor-grabbing',
             )}
-            style={duping ? { cursor: DUP_CURSOR } : undefined}
+            style={duping || (dupKeyHeld && !editing) ? { cursor: DUP_CURSOR } : undefined}
             onPointerDown={(e) => startDrag(e, 'move', true)}
             onDoubleClick={() => canEdit && !editing && enterEdit()}
             onPointerMove={(e) => {
