@@ -8,13 +8,14 @@ import * as githubApp from './githubApp.ts'
 import type { Actor, Frame } from '../shared/types.ts'
 
 /**
- * GitHub repo as an import source: connect a repo (fine-grained PAT), let
- * doop enumerate its screens from framework routing conventions, and land the
- * selected ones on the canvas — captured from the live deployment where one
- * exists, imported directly for static HTML, and as labeled placeholder
- * frames where neither works (screens behind a login, dynamic routes). The
- * repo supplies the map; whichever lane can reach a screen supplies the
- * pixels.
+ * GitHub repo as an import source — a ONE-TIME, CODE-ONLY job: connect a
+ * repo (GitHub App install or fine-grained PAT), let doop enumerate its
+ * screens from framework routing conventions, and land the selected ones on
+ * the canvas. Repo HTML imports directly; screens that only exist as code
+ * land as outline frames, which the reconstruction pass (githubRecon.ts)
+ * designs from their source when a model is available. Nothing in this flow
+ * touches the live site — capturing deployed pages belongs to the website
+ * importer, and logged-in screens to the design-sync snippet.
  *
  * Provenance follows the design-sync pattern: a marker meta stamped into the
  * frame HTML (`doop-github-screen`), no frame column. The marker carries the
@@ -448,25 +449,29 @@ export function placeholderHtml(
     state === 'sketching'
       ? 'Doop is reading this screen’s source and sketching it here — give it a moment.'
       : state === 'failed'
-        ? 'Doop tried to sketch this screen from its source but the run failed — delete the frame and re-import to retry.'
+        ? 'Doop couldn’t design this screen this time. Two ways to get it done:'
         : screen.kind === 'story'
           ? 'A Storybook story, imported as an outline — the repo holds its code.'
           : 'Imported as an outline — the repo holds this screen’s code.'
-  /* people who drive their own agent over MCP get a ready-made prompt — that
-     agent usually has the repo checked out, making it the best builder here */
-  const byoPrompt =
-    state === 'plain'
-      ? `<p style="margin-top:14px">Using your own agent with this repo checked out? Try:</p>` +
+  /* Every resting state (plain outline or failed run) shows the two ways
+     forward: a ready-made prompt for people who drive their own agent over
+     MCP (that agent usually has the repo checked out — the best builder),
+     and connecting a model account so the Doop Agent handles it. Only the
+     transient 'sketching' card stays quiet. */
+  const waysForward =
+    state === 'sketching'
+      ? ''
+      : `<p style="margin-top:14px"><b style="color:#444">Use your own agent</b> — with this repo checked out, prompt it:</p>` +
         `<p style="margin-top:8px;font-family:ui-monospace,monospace;font-size:11.5px;background:#f7f7f8;border:1px solid #eee;border-radius:8px;padding:10px 12px;text-align:left">` +
-        `“On my doop canvas, design the outline frames imported from ${escapeHtml(conn.repo)} — read each screen’s source (the frame lists its file path) and set_frame_html a faithful version.”</p>`
-      : ''
+        `“On my doop canvas, design the outline frames imported from ${escapeHtml(conn.repo)} — read each screen’s source (the frame lists its file path) and set_frame_html a faithful version.”</p>` +
+        `<p style="margin-top:12px"><b style="color:#444">Or connect your ChatGPT subscription</b> in Settings — the Doop Agent then sketches screens like this${state === 'failed' ? ' (delete this frame and re-import to retry)' : ' automatically'}.</p>`
   return (
     '<!doctype html>\n<html><head>' +
     markerMeta(conn.id, screen) +
     `<meta name="${PLACEHOLDER_META}" content="1">` +
     `<meta http-equiv="Content-Security-Policy" content="${SNAPSHOT_CSP}">` +
-    '<style>*{margin:0;box-sizing:border-box}body{font-family:system-ui,sans-serif;height:100vh;display:grid;place-items:center;background:repeating-linear-gradient(45deg,#fafafa,#fafafa 12px,#f4f4f5 12px,#f4f4f5 24px);color:#555}main{text-align:center;max-width:420px;padding:32px;background:#fff;border:1px dashed #ccc;border-radius:12px}h1{font-size:18px;margin-bottom:6px}code{font-size:12px;color:#888}p{font-size:13px;line-height:1.5;color:#777;margin-top:10px}</style>' +
-    `</head><body><main><h1>${escapeHtml(screen.title)}</h1><code>${escapeHtml(screen.sourcePath || screen.route)}</code><p>${reason}</p>${byoPrompt}</main></body></html>`
+    '<style>*{margin:0;box-sizing:border-box}body{font-family:system-ui,sans-serif;height:100vh;display:grid;place-items:center;background:repeating-linear-gradient(45deg,#fafafa,#fafafa 12px,#f4f4f5 12px,#f4f4f5 24px);color:#555}main{text-align:center;max-width:520px;padding:32px;background:#fff;border:1px dashed #ccc;border-radius:12px}h1{font-size:18px;margin-bottom:6px}code{font-size:12px;color:#888}p{font-size:13px;line-height:1.5;color:#777;margin-top:10px}</style>' +
+    `</head><body><main><h1>${escapeHtml(screen.title)}</h1><code>${escapeHtml(screen.sourcePath || screen.route)}</code><p>${reason}</p>${waysForward}</main></body></html>`
   )
 }
 

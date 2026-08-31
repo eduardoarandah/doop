@@ -167,7 +167,18 @@ export function scheduleReconstructions(
     const queue = jobs.slice(0, MAX_RECONSTRUCTIONS_PER_IMPORT)
     console.log(`[github-recon] ${queue.length} screen(s) from ${conn.repo} on ${model.label}`)
 
+    /* a billing/auth failure is account-wide — one screen proving it is
+       enough; the rest flip to the actionable 'failed' card without another
+       model call each */
+    let accountDead = false
+    const isAccountError = (err: unknown) =>
+      err instanceof Error && /credit|billing|quota|api key|unauthorized|401|403/i.test(err.message)
+
     async function runOne(job: { frameId: string; screen: RepoScreen }) {
+      if (accountDead) {
+        actions.updateFrame(job.frameId, { html: placeholderHtml(conn, job.screen, 'failed') }, actor)
+        return
+      }
       try {
         const closure = await collectClosure(conn, job.screen, paths)
         if (!closure.length) throw new Error('no readable source')
@@ -187,6 +198,7 @@ export function scheduleReconstructions(
         actions.updateFrame(job.frameId, { html: wrapGeneratedHtml(html, conn, job.screen), height }, actor)
       } catch (err) {
         console.error(`[github-recon] ${job.screen.route} failed`, err)
+        if (isAccountError(err)) accountDead = true
         actions.updateFrame(job.frameId, { html: placeholderHtml(conn, job.screen, 'failed') }, actor)
       }
     }
