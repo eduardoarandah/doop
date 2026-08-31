@@ -1293,6 +1293,8 @@ function GithubSection({
   const [repo, setRepo] = useState('')
   const [token, setToken] = useState('')
   const [deployUrl, setDeployUrl] = useState('')
+  /* per-connection deploy-URL drafts, for connections created without one */
+  const [urlDrafts, setUrlDrafts] = useState<Record<string, string>>({})
   const [busy, setBusy] = useState<'connecting' | string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
@@ -1415,6 +1417,25 @@ function GithubSection({
     setConnections((c) => c?.filter((x) => x.id !== connId) ?? null)
   }
 
+  async function saveDeployUrl(conn: GithubConnectionInfo) {
+    const draft = (urlDrafts[conn.id] ?? '').trim()
+    if (busy || !draft) return
+    setBusy(conn.id + ':url')
+    setError(null)
+    try {
+      const updated = await api.setGithubDeployUrl(canvasId, conn.id, draft)
+      setConnections((c) => c?.map((x) => (x.id === conn.id ? updated : x)) ?? null)
+      setNotice(
+        conn.frames
+          ? 'deployment URL saved — hit ↻ Re-sync to capture placeholder screens for real'
+          : 'deployment URL saved — pages will now capture live',
+      )
+      setBusy(null)
+    } catch (e) {
+      failed(e, 'could not save the deployment URL')
+    }
+  }
+
   if (forbidden) return null
   return (
     <div className="mt-3.5 flex flex-col gap-2.5 border-t border-line-soft pt-3.5">
@@ -1426,31 +1447,53 @@ function GithubSection({
           : ' Use a fine-grained token scoped to the one repo, read-only contents. The token never leaves the server.'}
       </Note>
       {(connections ?? []).map((conn) => (
-        <div key={conn.id} className="flex items-center gap-2 text-[13px]">
-          <b className="min-w-0 overflow-hidden text-ellipsis whitespace-nowrap font-semibold">
-            {conn.repo}
-            <span className="font-normal text-ink-faint">@{conn.branch}</span>
-          </b>
-          <Note className="mr-auto shrink-0">
-            {conn.frames ? `${conn.frames} screen${conn.frames === 1 ? '' : 's'}` : 'nothing imported yet'}
-          </Note>
-          <Button size="sm" className="px-2.5 text-xs" disabled={!!busy} onClick={() => analyze(conn)}>
-            {busy === conn.id ? 'Scanning…' : 'Find screens'}
-          </Button>
-          {conn.frames > 0 && (
-            <Button size="sm" className="px-2.5 text-xs" disabled={!!busy} onClick={() => resync(conn)}>
-              {busy === conn.id + ':resync' ? 'Syncing…' : '↻ Re-sync'}
+        <div key={conn.id} className="flex flex-col gap-1.5">
+          <div className="flex items-center gap-2 text-[13px]">
+            <b className="min-w-0 overflow-hidden text-ellipsis whitespace-nowrap font-semibold">
+              {conn.repo}
+              <span className="font-normal text-ink-faint">@{conn.branch}</span>
+            </b>
+            <Note className="mr-auto shrink-0">
+              {conn.frames ? `${conn.frames} screen${conn.frames === 1 ? '' : 's'}` : 'nothing imported yet'}
+            </Note>
+            <Button size="sm" className="px-2.5 text-xs" disabled={!!busy} onClick={() => analyze(conn)}>
+              {busy === conn.id ? 'Scanning…' : 'Find screens'}
             </Button>
+            {conn.frames > 0 && (
+              <Button size="sm" className="px-2.5 text-xs" disabled={!!busy} onClick={() => resync(conn)}>
+                {busy === conn.id + ':resync' ? 'Syncing…' : '↻ Re-sync'}
+              </Button>
+            )}
+            <Button
+              variant="bare"
+              size="icon-sm"
+              className="-mr-1.5 text-[13px] hover:bg-brand/10 hover:text-accent-ink"
+              title="Disconnect this repository"
+              onClick={() => disconnect(conn.id)}
+            >
+              ✕
+            </Button>
+          </div>
+          {!conn.deployUrl && (
+            <div className="flex flex-col items-stretch gap-2 sm:flex-row">
+              <Input
+                className="flex-1 rounded-[10px] bg-paper font-mono text-[12px] focus:ring-0"
+                placeholder="Deployed URL — without it, pages import as placeholders"
+                value={urlDrafts[conn.id] ?? ''}
+                disabled={!!busy}
+                onChange={(e) => setUrlDrafts((d) => ({ ...d, [conn.id]: e.target.value }))}
+                onKeyDown={(e) => e.key === 'Enter' && saveDeployUrl(conn)}
+              />
+              <Button
+                size="sm"
+                className="justify-center px-2.5 text-xs"
+                disabled={!!busy || !(urlDrafts[conn.id] ?? '').trim()}
+                onClick={() => saveDeployUrl(conn)}
+              >
+                {busy === conn.id + ':url' ? 'Saving…' : 'Save URL'}
+              </Button>
+            </div>
           )}
-          <Button
-            variant="bare"
-            size="icon-sm"
-            className="-mr-1.5 text-[13px] hover:bg-brand/10 hover:text-accent-ink"
-            title="Disconnect this repository"
-            onClick={() => disconnect(conn.id)}
-          >
-            ✕
-          </Button>
         </div>
       ))}
       {pickerRepos && (

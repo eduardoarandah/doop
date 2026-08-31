@@ -924,6 +924,20 @@ app.delete('/api/canvases/:id/github/:connId', async (req, res) => {
   res.json({ ok: true })
 })
 
+/* set/clear the deployment URL that powers the live-capture lane — the
+   app-install flow never asks for one, so it's often added after connect */
+app.patch('/api/canvases/:id/github/:connId', async (req, res) => {
+  const c = requireDurableCanvas(req, res, req.params.id)
+  if (!c) return
+  try {
+    const conn = await github.setDeployUrl(c.id, req.params.connId, String(req.body?.deployUrl ?? ''))
+    if (!conn) return res.status(404).json({ error: 'connection not found' })
+    res.json({ ...github.connectionInfo(conn), frames: github.importedFrameCount(c, conn.id) })
+  } catch (e) {
+    res.status(400).json({ error: e instanceof Error ? e.message : 'invalid deployment URL' })
+  }
+})
+
 app.post('/api/canvases/:id/github/:connId/analyze', async (req, res) => {
   const c = requireDurableCanvas(req, res, req.params.id)
   if (!c) return

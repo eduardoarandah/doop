@@ -143,6 +143,28 @@ export async function createConnection(input: {
   return row
 }
 
+/** Normalize a user-supplied deployment URL; '' clears it, garbage throws. */
+function cleanDeployUrl(raw: string): string | null {
+  const candidate = raw.trim()
+  if (!candidate) return null
+  const url = new URL(/^https?:\/\//i.test(candidate) ? candidate : `https://${candidate}`)
+  if (url.protocol !== 'http:' && url.protocol !== 'https:') throw new Error('the deployment URL must be http(s)')
+  return url.href
+}
+
+/** Set or clear the connection's deployment URL — the app-install flow has
+ *  no URL prompt, so connections often start without one (every page screen
+ *  lands as a placeholder until this is set). */
+export async function setDeployUrl(canvasId: string, id: string, raw: string): Promise<GithubConnection | undefined> {
+  const deployUrl = cleanDeployUrl(raw)
+  const [row] = await db
+    .update(githubConnections)
+    .set({ deployUrl })
+    .where(and(eq(githubConnections.id, id), eq(githubConnections.canvasId, canvasId)))
+    .returning()
+  return row ?? undefined
+}
+
 export function listConnections(canvasId: string): Promise<GithubConnection[]> {
   return db
     .select()
@@ -589,7 +611,9 @@ export async function importScreens(
 /** Refresh every frame this connection imported, in place: repo HTML re-reads
  *  the branch head, live captures re-run. Positions the user arranged stay —
  *  only content (and captured height) track the source, mirroring the
- *  design-sync update contract. Placeholders have no source to re-read.
+ *  design-sync update contract. Placeholder frames whose screen now HAS a
+ *  reachable lane (a deployment URL was added after import) are upgraded to
+ *  real pixels in place; placeholders that still have no lane stay put.
  *
  *  Markers live in frame HTML, which any member can edit — so they are only
  *  trusted as far as the freshly computed manifest confirms them. A marker
@@ -615,7 +639,8 @@ export async function resyncConnection(
   let updated = 0
   const failures: { route: string; error: string }[] = []
   for (const { frame, screen } of mine) {
-    if (isGithubPlaceholderHtml(frame.html)) continue
+    /* a placeholder only re-runs when its screen now has a real lane */
+    if (isGithubPlaceholderHtml(frame.html) && screen.source === 'placeholder') continue
     try {
       if (screen.source === 'static') {
         const html = wrapRepoHtml(await fetchRepoFile(conn, screen.sourcePath), conn, screen)
@@ -628,7 +653,13 @@ export async function resyncConnection(
         const imported = await importPage(url.href)
         const html = injectHead(imported.html, markerMeta(conn.id, screen))
         if (html !== frame.html) {
-          actions.updateFrame(frame.id, { html, height: imported.height }, actor)
+          /* upgrading a placeholder also adopts the capture's real width */
+          const wasPlaceholder = isGithubPlaceholderHtml(frame.html)
+          actions.updateFrame(
+            frame.id,
+            { html, height: imported.height, ...(wasPlaceholder ? { width: imported.width } : {}) },
+            actor,
+          )
           updated++
         }
       }

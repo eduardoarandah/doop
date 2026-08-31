@@ -207,6 +207,11 @@ export const api = {
     req<InstallationRepo[]>(`/api/canvases/${canvasId}/github/app/repos?pass=${encodeURIComponent(pass)}`),
   deleteGithubConnection: (canvasId: string, connId: string) =>
     req(`/api/canvases/${canvasId}/github/${connId}`, { method: 'DELETE' }),
+  setGithubDeployUrl: (canvasId: string, connId: string, deployUrl: string) =>
+    req<GithubConnectionInfo>(`/api/canvases/${canvasId}/github/${connId}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ deployUrl }),
+    }),
   analyzeGithub: (canvasId: string, connId: string) =>
     req<RepoManifest>(`/api/canvases/${canvasId}/github/${connId}/analyze`, { method: 'POST' }),
   importGithubScreens: (canvasId: string, connId: string, screens: RepoScreen[]) =>
