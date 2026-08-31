@@ -673,7 +673,7 @@ function ImportModal({
   const selectedCount = selected.size
   const laneLabel: Record<RepoScreen['source'], string> = {
     static: 'from repo',
-    placeholder: 'outline',
+    placeholder: 'agent sketch',
   }
 
   return (

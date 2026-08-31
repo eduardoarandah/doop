@@ -329,9 +329,19 @@ export async function analyzeConnection(conn: GithubConnection): Promise<RepoMan
   }
 }
 
+/** The repo's blob paths at the branch head — the reconstruction pass uses
+ *  this to resolve a screen's import closure. */
+export async function fetchTreePaths(conn: GithubConnection): Promise<string[]> {
+  const tree = await ghJson<{ tree: { path: string; type: string }[] }>(
+    await connectionAuth(conn),
+    `/repos/${conn.repo}/git/trees/${encodeURIComponent(conn.branch)}?recursive=1`,
+  )
+  return tree.tree.filter((e) => e.type === 'blob').map((e) => e.path)
+}
+
 const MAX_FILE_BYTES = 1_500_000
 
-async function fetchRepoFile(conn: GithubConnection, path: string): Promise<string> {
+export async function fetchRepoFile(conn: GithubConnection, path: string): Promise<string> {
   const res = await gh(
     await connectionAuth(conn),
     `/repos/${conn.repo}/contents/${path.split('/').map(encodeURIComponent).join('/')}?ref=${encodeURIComponent(conn.branch)}`,
@@ -414,24 +424,49 @@ export function wrapRepoHtml(
   return injectHead(sanitizeSnapshotHtml(html), inject)
 }
 
-/** The stand-in frame for a screen no lane can reach yet: it holds the
- *  screen's place in the product map until the sync snippet (or a future
- *  reconstruction pass) fills it in. */
+/** A model-generated reconstruction → frame HTML: same scrub + marker as
+ *  repo HTML, but no raw.githubusercontent base — the document is
+ *  self-contained by instruction. */
+export function wrapGeneratedHtml(
+  html: string,
+  conn: Pick<GithubConnection, 'id' | 'repo' | 'branch'>,
+  screen: { kind: ScreenKind; route: string; sourcePath: string },
+): string {
+  const inject = markerMeta(conn.id, screen) + `<meta http-equiv="Content-Security-Policy" content="${SNAPSHOT_CSP}">`
+  return injectHead(sanitizeSnapshotHtml(html), inject)
+}
+
+/** The stand-in frame for a screen that only exists as code. When the agent
+ *  is about to reconstruct it, the copy says so ('sketching'); otherwise it
+ *  is a plain outline, and a failed run gets an honest note. */
 export function placeholderHtml(
   conn: Pick<GithubConnection, 'id' | 'repo'>,
   screen: { kind: ScreenKind; route: string; sourcePath: string; title: string },
+  state: 'plain' | 'sketching' | 'failed' = 'plain',
 ): string {
   const reason =
-    screen.kind === 'story'
-      ? 'A Storybook story from the repo — it exists as code, not renderable HTML. Ask an agent to design it here.'
-      : 'This screen exists in the repo as code, not renderable HTML. Ask an agent to design it here.'
+    state === 'sketching'
+      ? 'Doop is reading this screen’s source and sketching it here — give it a moment.'
+      : state === 'failed'
+        ? 'Doop tried to sketch this screen from its source but the run failed — delete the frame and re-import to retry.'
+        : screen.kind === 'story'
+          ? 'A Storybook story, imported as an outline — the repo holds its code.'
+          : 'Imported as an outline — the repo holds this screen’s code.'
+  /* people who drive their own agent over MCP get a ready-made prompt — that
+     agent usually has the repo checked out, making it the best builder here */
+  const byoPrompt =
+    state === 'plain'
+      ? `<p style="margin-top:14px">Using your own agent with this repo checked out? Try:</p>` +
+        `<p style="margin-top:8px;font-family:ui-monospace,monospace;font-size:11.5px;background:#f7f7f8;border:1px solid #eee;border-radius:8px;padding:10px 12px;text-align:left">` +
+        `“On my doop canvas, design the outline frames imported from ${escapeHtml(conn.repo)} — read each screen’s source (the frame lists its file path) and set_frame_html a faithful version.”</p>`
+      : ''
   return (
     '<!doctype html>\n<html><head>' +
     markerMeta(conn.id, screen) +
     `<meta name="${PLACEHOLDER_META}" content="1">` +
     `<meta http-equiv="Content-Security-Policy" content="${SNAPSHOT_CSP}">` +
     '<style>*{margin:0;box-sizing:border-box}body{font-family:system-ui,sans-serif;height:100vh;display:grid;place-items:center;background:repeating-linear-gradient(45deg,#fafafa,#fafafa 12px,#f4f4f5 12px,#f4f4f5 24px);color:#555}main{text-align:center;max-width:420px;padding:32px;background:#fff;border:1px dashed #ccc;border-radius:12px}h1{font-size:18px;margin-bottom:6px}code{font-size:12px;color:#888}p{font-size:13px;line-height:1.5;color:#777;margin-top:10px}</style>' +
-    `</head><body><main><h1>${escapeHtml(screen.title)}</h1><code>${escapeHtml(screen.route)}</code><p>${reason}</p></main></body></html>`
+    `</head><body><main><h1>${escapeHtml(screen.title)}</h1><code>${escapeHtml(screen.sourcePath || screen.route)}</code><p>${reason}</p>${byoPrompt}</main></body></html>`
   )
 }
 
@@ -449,6 +484,8 @@ const DEFAULT_H = 900
 export interface GithubImportResult {
   frames: Frame[]
   failures: { route: string; error: string }[]
+  /** outline frames awaiting the reconstruction pass (server-side only) */
+  pending: { frameId: string; screen: RepoScreen }[]
 }
 
 /** A screen's identity across analyze → import → resync. */
@@ -487,15 +524,18 @@ export function matchSelection(manifest: RepoScreen[], raw: unknown): { screens:
 }
 
 /** Import the selected screens — a one-time, code-only job: repo HTML lands
- *  directly, everything that exists only as code lands as a labeled outline
- *  frame holding the screen's place in the product map. Nothing here touches
- *  the live site — that is the website importer's territory. The manifest is
- *  recomputed and the selection resolved against it — see matchSelection. */
+ *  directly; screens that only exist as code land as outline frames, listed
+ *  in `pending` so the caller can hand them to the reconstruction pass
+ *  (githubRecon.ts) when a model is available — `sketch` says whether one
+ *  is, which the outline copy reflects. Nothing here touches the live site —
+ *  that is the website importer's territory. The manifest is recomputed and
+ *  the selection resolved against it — see matchSelection. */
 export async function importScreens(
   conn: GithubConnection,
   canvas: { id: string; frames: Frame[] },
   rawSelection: unknown,
   actor: Actor,
+  options: { sketch?: boolean } = {},
 ): Promise<GithubImportResult> {
   const manifest = await analyzeConnection(conn)
   const { screens: selection, rejected } = matchSelection(manifest.screens, rawSelection)
@@ -531,19 +571,23 @@ export async function importScreens(
     return frame
   }
 
+  const pending: { frameId: string; screen: RepoScreen }[] = []
   for (const screen of selection) {
     try {
       let html: string
       const width = DEFAULT_W
       let height = DEFAULT_H
       const name = screen.title
+      let outline = false
       if (screen.source === 'static') {
         html = wrapRepoHtml(await fetchRepoFile(conn, screen.sourcePath), conn, screen)
       } else {
-        html = placeholderHtml(conn, screen)
+        html = placeholderHtml(conn, screen, options.sketch ? 'sketching' : 'plain')
         height = 800
+        outline = true
       }
       const frame = place(name, html, width, height)
+      if (frame && outline && options.sketch) pending.push({ frameId: frame.id, screen })
       if (!frame) {
         failures.push({ route: screen.route, error: 'canvas not found' })
         continue
@@ -562,7 +606,7 @@ export async function importScreens(
     .where(eq(githubConnections.id, conn.id))
     .catch((err: unknown) => console.error('[github] lastSyncedAt write failed', err))
 
-  return { frames, failures }
+  return { frames, failures, pending }
 }
 
 export function isGithubPlaceholderHtml(html: string): boolean {

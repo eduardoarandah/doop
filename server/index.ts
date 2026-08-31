@@ -29,6 +29,8 @@ import {
 import * as ingest from './ingest.ts'
 import * as github from './github.ts'
 import * as githubApp from './githubApp.ts'
+import { scheduleReconstructions } from './githubRecon.ts'
+import { pickModel } from './agentModel.ts'
 import { seed } from './seed.ts'
 import * as allowance from './allowance.ts'
 import * as modelAccounts from './modelAccounts.ts'
@@ -940,11 +942,16 @@ app.post('/api/canvases/:id/github/:connId/import', async (req, res) => {
   if (!c) return
   const conn = await github.getConnection(c.id, req.params.connId)
   if (!conn) return res.status(404).json({ error: 'connection not found' })
-  /* live captures open Chromium — same budget as website imports */
   if (!takeImportSlot(req.user!.id)) return res.status(429).json({ error: 'too many imports — wait a minute' })
   try {
     const actor = actions.resolveActor({ name: req.user!.name, kind: 'user' })
-    res.json(await github.importScreens(conn, c, req.body?.screens, actor))
+    /* code-only screens get agent reconstruction when a model can run it —
+       the requester's own account, else the server tier (same resolution as
+       every other agent task, billed to the same person) */
+    const sketch = !!(await pickModel(req.user!.id))
+    const { pending, ...result } = await github.importScreens(conn, c, req.body?.screens, actor, { sketch })
+    scheduleReconstructions(conn, pending, actor, req.user!.id)
+    res.json(result)
   } catch (e) {
     res.status(400).json({ error: e instanceof Error ? e.message : 'import failed' })
   }

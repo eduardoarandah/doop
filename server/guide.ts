@@ -171,6 +171,22 @@ Viewers watch designs assemble live. Stream with append_frame_html:
   component 480×360, square social post 640×640. Set width/height on create_frame, or
   adjust later with update_frame.
 
+## GitHub outline frames — design them from source
+
+Frames whose HTML carries a "doop-github-screen" marker meta were imported from a
+connected GitHub repository. Ones that ALSO carry "doop-github-placeholder" are
+outlines: the screen exists in that repo only as code (a Next.js page, a Storybook
+story) and is waiting to be designed. The marker records the repo, the route and the
+source file path.
+
+If you have that repository available (checked out locally, or reachable through your
+own tools), you are the best agent for the job: read the screen's source file and the
+components it imports, then set_frame_html a complete self-contained document that
+faithfully renders it — real CSS derived from its actual classes and design tokens,
+realistic placeholder data, no scripts. Design at the frame's width and resize the
+frame to the content. Updating the outline in place (not a new frame) is correct here —
+that is what the outline is for.
+
 ## Images — search first, then upload
 
 Real imagery is what separates an appealing design from a wireframe. Frames can load
