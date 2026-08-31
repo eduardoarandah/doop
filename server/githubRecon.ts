@@ -1,6 +1,8 @@
 import { pickModel } from './agentModel.ts'
+import { createAsset } from './assets.ts'
 import * as actions from './actions.ts'
 import {
+  fetchRepoBinary,
   fetchRepoFile,
   fetchTreePaths,
   placeholderHtml,
@@ -30,7 +32,7 @@ const MAX_CLOSURE_FILES = 10
 const MAX_CLOSURE_BYTES = 80_000
 const MAX_RECONSTRUCTIONS_PER_IMPORT = 12
 const RECON_CONCURRENCY = 2
-const MODEL_MAX_TOKENS = 20_000
+const MODEL_MAX_TOKENS = 32_000
 const MAX_REQUEST_ROUNDS = 2
 const MAX_REQUESTED_FILES = 15
 const MAX_REQUESTED_BYTES = 100_000
@@ -102,6 +104,7 @@ export async function collectClosure(
   for (const context of [
     root + 'layout.tsx',
     root.replace(/pages\/$/, 'pages/') + '_app.tsx',
+    root.replace(/pages\/$/, 'pages/') + '_document.tsx',
     ...paths.filter((p) => clean(p) && /(^|\/)(globals?|app|main|index)\.css$/.test(p)).slice(0, 2),
     ...paths.filter((p) => clean(p) && /(^|\/)tailwind\.config\.[jt]s$/.test(p)).slice(0, 1),
     ...paths.filter((p) => clean(p) && /(^|\/)(theme|tokens|colors)\.[jt]sx?$/i.test(p)).slice(0, 2),
@@ -156,8 +159,9 @@ Then produce a single COMPLETE, self-contained HTML document that faithfully ren
 - Translate the component structure and its styling into real inline <style> CSS, using the palette, fonts and tokens you found — not defaults, not guesses.
 - The document is exactly 1280px wide. Choose the natural height for the content and declare it as the LAST line of your output, an HTML comment: <!-- doop-height: 900 -->
 - Dynamic data (user names, table rows, dates) gets realistic, specific placeholder values — never lorem ipsum or "Item 1". Static marketing copy comes from the source, verbatim.
-- No <script> tags, no external CSS or JS. Google Fonts via <link> are allowed when the source names a font.
-- Images: use a solid-color or CSS-gradient stand-in with the right aspect ratio; never invent external image URLs.
+- Reproduce the ENTIRE page top to bottom — every section the source renders (hero, features, FAQ, footer, all of it). A truncated page is a failed reconstruction; declare the true height.
+- No <script> tags, no external CSS or JS. Google Fonts via <link> are allowed when the source names a font (check _document/layout for font loading).
+- Images: the repository's real assets are the right ones — when the tree contains the actual file (logos, illustrations, product screenshots), reference it as src="repo:path/from/tree" (e.g. src="repo:public/logos/ibm.svg") and it will be resolved to a served copy. Only when no real asset exists, use a solid-color or CSS-gradient stand-in with the right aspect ratio. Never invent external image URLs.
 - Start with <!doctype html>. Output ONLY the HTML document (plus the final height comment) — no markdown fences, no commentary.`
 
 const REQUEST_FILES_TOOL = {
@@ -176,11 +180,12 @@ const REQUEST_FILES_TOOL = {
 /** The tree excerpt the model investigates from: design- and content-relevant
  *  paths first, then the rest, capped. */
 export function treeExcerpt(paths: string[], sourcePath: string): string {
-  const clean = paths.filter((p) => !p.includes('node_modules/') && !/\.(png|jpe?g|webp|ico|woff2?|ttf|mp4)$/i.test(p))
+  const clean = paths.filter((p) => !p.includes('node_modules/') && !/\.(ico|woff2?|ttf|otf|mp4|webm)$/i.test(p))
   const near = dirOf(sourcePath)
   const score = (p: string) =>
     (p.startsWith(near) ? 4 : 0) +
     (/(theme|token|color|style|css|scss|tailwind|chakra)/i.test(p) ? 3 : 0) +
+    (/\.(png|jpe?g|webp|svg|gif)$/i.test(p) && /(logo|brand|hero|screenshot|public|assets|images)/i.test(p) ? 2 : 0) +
     (/(locales?|i18n|translations?|content|copy)/i.test(p) ? 3 : 0) +
     (/(component|layout|common|shared|ui)/i.test(p) ? 1 : 0)
   return clean
@@ -200,8 +205,39 @@ export function extractHtml(blocks: { type: string; text?: string }[]): { html: 
   const start = html.search(/<!doctype/i)
   if (start === -1) throw new Error('the model returned no HTML document')
   html = html.slice(start)
-  const height = Math.min(3000, Math.max(480, Number(html.match(/doop-height:\s*(\d+)/)?.[1]) || 900))
+  const height = Math.min(8000, Math.max(480, Number(html.match(/doop-height:\s*(\d+)/)?.[1]) || 900))
   return { html, height }
+}
+
+const REPO_REF_RE = /(["'(])repo:([^"')\s]+)(["')])/g
+const MAX_TRANSPLANTED_ASSETS = 12
+const TRANSPARENT_PX = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7'
+/* same env read as server/auth.ts — asset URLs must be absolute inside
+   sandboxed frame iframes */
+const ORIGIN = process.env.BETTER_AUTH_URL || 'http://localhost:4300'
+
+/** Transplant the repository's real image assets: every src="repo:<path>"
+ *  the model emitted is fetched through the connection and re-hosted in
+ *  doop's asset store, so private-repo logos and screenshots render for
+ *  every viewer. Unresolvable refs collapse to a transparent pixel rather
+ *  than a broken image. */
+export async function resolveRepoAssets(conn: GithubConnection, html: string, pathSet: Set<string>): Promise<string> {
+  const wanted = [...new Set([...html.matchAll(REPO_REF_RE)].map((m) => m[2]!))]
+    .filter((p) => pathSet.has(p))
+    .slice(0, MAX_TRANSPLANTED_ASSETS)
+  const urls = new Map<string, string>()
+  for (const p of wanted) {
+    try {
+      const asset = await createAsset(await fetchRepoBinary(conn, p), {
+        canvasId: conn.canvasId,
+        uploadedBy: 'Doop',
+      })
+      urls.set(p, `${ORIGIN}/a/${asset.id}.${asset.ext}`)
+    } catch (err) {
+      console.error(`[github-recon] asset ${p} failed`, err)
+    }
+  }
+  return html.replace(REPO_REF_RE, (_full, pre, p, post) => pre + (urls.get(p) ?? TRANSPARENT_PX) + post)
 }
 
 /** Reconstruct the given outline frames in the background. Fire-and-forget
@@ -304,7 +340,8 @@ export function scheduleReconstructions(
           messages.push({ role: 'user', content: results })
         }
         const { html, height } = extractHtml((result?.content ?? []) as { type: string; text?: string }[])
-        actions.updateFrame(job.frameId, { html: wrapGeneratedHtml(html, conn, job.screen), height }, actor)
+        const withAssets = await resolveRepoAssets(conn, html, pathSet)
+        actions.updateFrame(job.frameId, { html: wrapGeneratedHtml(withAssets, conn, job.screen), height }, actor)
       } catch (err) {
         console.error(`[github-recon] ${job.screen.route} failed`, err)
         if (isAccountError(err)) accountDead = true

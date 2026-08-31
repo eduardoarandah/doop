@@ -44,7 +44,7 @@ describe('extractHtml', () => {
     const fenced = extractHtml([
       { type: 'text', text: '```html\n<!doctype html><p>x</p>\n<!-- doop-height: 99999 -->\n```' },
     ])
-    expect(fenced.height).toBe(3000)
+    expect(fenced.height).toBe(8000)
     expect(extractHtml([{ type: 'text', text: '<!doctype html><p>x</p>' }]).height).toBe(900)
     expect(() => extractHtml([{ type: 'text', text: 'sorry, no' }])).toThrow(/no HTML/)
   })
@@ -67,6 +67,19 @@ describe('treeExcerpt', () => {
     expect(tree).toContain('src/styles/theme.ts')
     expect(tree).toContain('public/locales/en/backup.json')
     expect(tree).not.toContain('node_modules')
-    expect(tree).not.toContain('logo.png')
+    /* images stay listed — they are transplantable assets now */
+    expect(tree).toContain('public/logo.png')
+  })
+})
+
+describe('repo asset references', () => {
+  it('keeps image paths in the tree so the model can transplant them', () => {
+    const tree = treeExcerpt(['public/logos/ibm.svg', 'src/pages/index.tsx'], 'src/pages/index.tsx')
+    expect(tree).toContain('public/logos/ibm.svg')
+  })
+
+  it('extractHtml raises the height ceiling for full pages', () => {
+    const { height } = extractHtml([{ type: 'text', text: '<!doctype html><p>x</p>\n<!-- doop-height: 6600 -->' }])
+    expect(height).toBe(6600)
   })
 })
