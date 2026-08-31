@@ -593,7 +593,7 @@ export const FrameView = memo(function FrameView({ frame, raster }: { frame: Fra
 
                 {anchor && selected && (
                   <div
-                    className="pointer-events-auto absolute z-[5] origin-top-left [transform:scale(min(calc(1/var(--zoom,1)),2.4))_translateY(calc(-100%_-_8px))]"
+                    className="pointer-events-auto absolute z-[7] origin-top-left [transform:scale(min(calc(1/var(--zoom,1)),2.4))_translateY(calc(-100%_-_8px))]"
                     style={{
                       left: Math.min(Math.max(anchor.rect.x, 4), Math.max(4, frame.width - 60)),
                       top: Math.max(anchor.rect.y, 2),
