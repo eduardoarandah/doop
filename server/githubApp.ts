@@ -231,3 +231,35 @@ export function verifyInstallPass(pass: string, canvasId: string): { installatio
 export function installUrl(state: string): string {
   return `https://github.com/apps/${appSlug()}/installations/new?state=${encodeURIComponent(state)}`
 }
+
+/* ------------------------------------------------------------------ */
+/* Already-installed bounce                                            */
+
+/* same env read as server/auth.ts — not imported, so this module stays
+   loadable in unit tests without the auth stack */
+const PUBLIC_ORIGIN = process.env.BETTER_AUTH_URL || 'http://localhost:4300'
+
+/** When the app is ALREADY installed on the chosen GitHub account, the
+ *  install screen becomes a configure screen and GitHub redirects back
+ *  WITHOUT an OAuth code — leaving the ownership check nothing to verify.
+ *  This second signed token carries the canvas + installation through an
+ *  explicit OAuth authorize round-trip that exists purely to produce that
+ *  code; the callback then verifies ownership exactly like a fresh install. */
+export function signOauthState(canvasId: string, installationId: string, now = Date.now()): string {
+  if (/[.]/.test(canvasId + installationId)) throw new Error('invalid id')
+  return pack('gh-oauth', [canvasId, installationId], now + STATE_TTL_MS)
+}
+
+export function verifyOauthState(state: string): { canvasId: string; installationId: string } | undefined {
+  const fields = unpack('gh-oauth', state, 2)
+  return fields ? { canvasId: fields[0]!, installationId: fields[1]! } : undefined
+}
+
+export function oauthBounceUrl(oauthState: string): string {
+  const params = new URLSearchParams({
+    client_id: process.env.GITHUB_APP_CLIENT_ID ?? '',
+    redirect_uri: `${PUBLIC_ORIGIN}/api/github/app/setup`,
+    state: oauthState,
+  })
+  return `https://github.com/login/oauth/authorize?${params}`
+}

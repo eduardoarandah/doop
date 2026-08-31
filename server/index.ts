@@ -893,17 +893,47 @@ app.post('/api/canvases/:id/github/app/start', (req, res) => {
    state could bind someone else's installation. Then swaps state for a pass
    and returns to the canvas, where the import modal shows the repo picker. */
 app.get('/api/github/app/setup', async (req, res) => {
-  const state = githubApp.verifyInstallState(String(req.query.state ?? ''))
-  const installationId = String(req.query.installation_id ?? '')
-  if (!state || !/^\d+$/.test(installationId)) return res.redirect('/')
-  try {
-    if (!(await githubApp.verifyInstallationOwner(String(req.query.code ?? ''), installationId)))
-      return res.redirect('/')
-  } catch {
-    return res.redirect('/')
+  const rawState = String(req.query.state ?? '')
+  const code = String(req.query.code ?? '')
+  /* failures land back on the canvas with a visible reason — a silent
+     homepage redirect reads as "nothing happened" */
+  const fail = (canvasId: string, reason: string) =>
+    res.redirect(`/c/${encodeURIComponent(canvasId)}?ghError=${encodeURIComponent(reason)}`)
+  const succeed = (canvasId: string, installationId: string) =>
+    res.redirect(
+      `/c/${encodeURIComponent(canvasId)}?ghInstall=${encodeURIComponent(githubApp.signInstallPass(canvasId, installationId))}`,
+    )
+
+  /* return leg of the already-installed bounce: the authorize round-trip
+     produced the code the configure screen didn't */
+  const oauth = githubApp.verifyOauthState(rawState)
+  if (oauth) {
+    try {
+      if (await githubApp.verifyInstallationOwner(code, oauth.installationId))
+        return succeed(oauth.canvasId, oauth.installationId)
+    } catch {
+      /* fall through to the error redirect */
+    }
+    return fail(oauth.canvasId, 'GitHub couldn’t confirm you own that installation — try connecting again')
   }
-  const pass = githubApp.signInstallPass(state.canvasId, installationId)
-  res.redirect(`/c/${encodeURIComponent(state.canvasId)}?ghInstall=${encodeURIComponent(pass)}`)
+
+  const state = githubApp.verifyInstallState(rawState)
+  if (!state) return res.redirect('/')
+  const installationId = String(req.query.installation_id ?? '')
+  if (!/^\d+$/.test(installationId))
+    return fail(state.canvasId, 'GitHub sent no installation back — try connecting again')
+
+  /* app already installed on that account: GitHub showed the configure
+     screen and returned WITHOUT an OAuth code — bounce through authorize
+     (instant for an already-authorized user) purely to get one */
+  if (!code) return res.redirect(githubApp.oauthBounceUrl(githubApp.signOauthState(state.canvasId, installationId)))
+
+  try {
+    if (await githubApp.verifyInstallationOwner(code, installationId)) return succeed(state.canvasId, installationId)
+  } catch {
+    /* fall through to the error redirect */
+  }
+  return fail(state.canvasId, 'GitHub couldn’t confirm you own that installation — try connecting again')
 })
 
 app.get('/api/canvases/:id/github/app/repos', async (req, res) => {

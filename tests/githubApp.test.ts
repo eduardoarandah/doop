@@ -4,10 +4,13 @@ import {
   appEnabled,
   appJwt,
   installUrl,
+  oauthBounceUrl,
   signInstallPass,
   signInstallState,
+  signOauthState,
   verifyInstallPass,
   verifyInstallState,
+  verifyOauthState,
 } from '../server/githubApp.ts'
 import { Client, startServer, type Server } from './harness.ts'
 
@@ -35,6 +38,29 @@ describe('install handoff signatures', () => {
     expect(verifyInstallPass(expired, 'canvas1')).toBeUndefined()
     /* a state is not a pass */
     expect(verifyInstallPass(signInstallState('canvas1', 'user1'), 'canvas1')).toBeUndefined()
+  })
+
+  it('keeps the oauth-bounce state distinct from install state and pass', () => {
+    const oauth = signOauthState('canvas1', '12345')
+    expect(verifyOauthState(oauth)).toEqual({ canvasId: 'canvas1', installationId: '12345' })
+    /* the three kinds must never be interchangeable */
+    expect(verifyOauthState(signInstallState('canvas1', 'user1'))).toBeUndefined()
+    expect(verifyOauthState(signInstallPass('canvas1', '12345'))).toBeUndefined()
+    expect(verifyInstallPass(oauth, 'canvas1')).toBeUndefined()
+    expect(verifyInstallState(oauth)).toBeUndefined()
+  })
+
+  it('builds the authorize bounce URL from the app client id', () => {
+    process.env.GITHUB_APP_CLIENT_ID = 'Iv1.test'
+    try {
+      const url = new URL(oauthBounceUrl('s1'))
+      expect(url.origin + url.pathname).toBe('https://github.com/login/oauth/authorize')
+      expect(url.searchParams.get('client_id')).toBe('Iv1.test')
+      expect(url.searchParams.get('state')).toBe('s1')
+      expect(url.searchParams.get('redirect_uri')).toContain('/api/github/app/setup')
+    } finally {
+      delete process.env.GITHUB_APP_CLIENT_ID
+    }
   })
 })
 

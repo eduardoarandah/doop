@@ -89,7 +89,13 @@ export function CanvasPage({ canvasId }: { canvasId: string }) {
     if (pass) history.replaceState(null, '', location.pathname)
     return pass
   })
-  const [showImport, setShowImport] = useState(!!ghInstallPass)
+  /* a failed install round-trip also lands here, with the reason to show */
+  const [ghInstallError] = useState<string | null>(() => {
+    const err = new URLSearchParams(location.search).get('ghError')
+    if (err) history.replaceState(null, '', location.pathname)
+    return err
+  })
+  const [showImport, setShowImport] = useState(!!ghInstallPass || !!ghInstallError)
   const [showMobileActions, setShowMobileActions] = useState(false)
   const [renaming, setRenaming] = useState(false)
   const [toast, setToast] = useState<string | null>(null)
@@ -498,6 +504,7 @@ export function CanvasPage({ canvasId }: { canvasId: string }) {
         <ImportModal
           canvasId={canvasId}
           installPass={ghInstallPass}
+          installError={ghInstallError}
           onClose={() => {
             setShowImport(false)
             setGhInstallPass(null)
@@ -526,11 +533,13 @@ export function CanvasPage({ canvasId }: { canvasId: string }) {
 function ImportModal({
   canvasId,
   installPass,
+  installError,
   onClose,
   onDone,
 }: {
   canvasId: string
   installPass: string | null
+  installError: string | null
   onClose: () => void
   onDone: (frameIds: string[], failedCount: number) => void
 }) {
@@ -852,7 +861,12 @@ function ImportModal({
               </Button>
             </ModalActions>
             <SyncKeysSection canvasId={canvasId} />
-            <GithubSection canvasId={canvasId} installPass={installPass} onReview={openRepoReview} />
+            <GithubSection
+              canvasId={canvasId}
+              installPass={installPass}
+              installError={installError}
+              onReview={openRepoReview}
+            />
           </>
         ) : (
           <>
@@ -1278,10 +1292,12 @@ function SyncKeysSection({ canvasId }: { canvasId: string }) {
 function GithubSection({
   canvasId,
   installPass,
+  installError,
   onReview,
 }: {
   canvasId: string
   installPass: string | null
+  installError: string | null
   onReview: (connection: GithubConnectionInfo, manifest: RepoManifest) => void
 }) {
   const [connections, setConnections] = useState<GithubConnectionInfo[] | null>(null)
@@ -1291,7 +1307,7 @@ function GithubSection({
   const [repo, setRepo] = useState('')
   const [token, setToken] = useState('')
   const [busy, setBusy] = useState<'connecting' | string | null>(null)
-  const [error, setError] = useState<string | null>(null)
+  const [error, setError] = useState<string | null>(installError)
   const [forbidden, setForbidden] = useState(false)
 
   useEffect(() => {
