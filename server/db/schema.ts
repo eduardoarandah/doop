@@ -105,12 +105,15 @@ export const syncEdges = pgTable(
   (t) => [primaryKey({ columns: [t.keyId, t.fromPage, t.toPage] })],
 )
 
-/** A GitHub repo connected to a canvas as an import source. The fine-grained
- *  PAT is stored server-side only and never reaches canvas members — API
- *  responses carry connection metadata, not the token. Revocation = row
- *  deletion (plus revoking the PAT on GitHub). Frames imported through a
- *  connection carry a marker meta in their HTML (see server/github.ts), same
- *  provenance pattern as design-sync frames — no frame column. */
+/** A GitHub repo connected to a canvas as an import source. Two credential
+ *  modes: a GitHub App installation (`installationId` set, short-lived
+ *  tokens minted per call — the preferred flow) or a fine-grained PAT
+ *  (`token` set — the paste-a-token fallback). Either way credentials stay
+ *  server-side; API responses carry connection metadata only. Revocation =
+ *  row deletion (plus uninstalling the app / revoking the PAT on GitHub).
+ *  Frames imported through a connection carry a marker meta in their HTML
+ *  (see server/github.ts), same provenance pattern as design-sync frames —
+ *  no frame column. */
 export const githubConnections = pgTable(
   'github_connections',
   {
@@ -119,7 +122,8 @@ export const githubConnections = pgTable(
     /** "owner/name" */
     repo: text('repo').notNull(),
     branch: text('branch').notNull(),
-    token: text('token').notNull(),
+    token: text('token'),
+    installationId: text('installation_id'),
     /** live deployment of this repo; enables the capture lane */
     deployUrl: text('deploy_url'),
     createdBy: text('created_by').notNull(),

@@ -7,6 +7,7 @@ import {
   type CanvasMember,
   type DiscoveredSite,
   type GithubConnectionInfo,
+  type InstallationRepo,
   type RepoManifest,
   type RepoScreen,
   type SyncKeyInfo,
@@ -33,7 +34,7 @@ import { useIsMobile } from '../hooks/use-mobile'
 import { cn } from '@/lib/utils'
 import { Button } from '../components/ui/button'
 import { Sheet, SheetContent, SheetDescription, SheetTitle } from '../components/ui/sheet'
-import { XIcon } from '../components/ui/icons'
+import { GithubIcon, XIcon } from '../components/ui/icons'
 import { Badge } from '../components/ui/badge'
 import { Input } from '../components/ui/input'
 import { Field } from '../components/ui/field'
@@ -81,7 +82,14 @@ export function CanvasPage({ canvasId }: { canvasId: string }) {
   const [view, setView] = useState<'canvas' | 'board'>('canvas')
   const [showConnect, setShowConnect] = useState(false)
   const [showShare, setShowShare] = useState(false)
-  const [showImport, setShowImport] = useState(false)
+  /* returning from a GitHub App install: the setup redirect appends a signed
+     pass — pull it off the URL and open the import modal on the repo picker */
+  const [ghInstallPass, setGhInstallPass] = useState<string | null>(() => {
+    const pass = new URLSearchParams(location.search).get('ghInstall')
+    if (pass) history.replaceState(null, '', location.pathname)
+    return pass
+  })
+  const [showImport, setShowImport] = useState(!!ghInstallPass)
   const [showMobileActions, setShowMobileActions] = useState(false)
   const [renaming, setRenaming] = useState(false)
   const [toast, setToast] = useState<string | null>(null)
@@ -489,7 +497,11 @@ export function CanvasPage({ canvasId }: { canvasId: string }) {
       {showImport && (
         <ImportModal
           canvasId={canvasId}
-          onClose={() => setShowImport(false)}
+          installPass={ghInstallPass}
+          onClose={() => {
+            setShowImport(false)
+            setGhInstallPass(null)
+          }}
           onDone={(frameIds, failedCount) => {
             setShowImport(false)
             setView('canvas')
@@ -513,10 +525,12 @@ export function CanvasPage({ canvasId }: { canvasId: string }) {
 
 function ImportModal({
   canvasId,
+  installPass,
   onClose,
   onDone,
 }: {
   canvasId: string
+  installPass: string | null
   onClose: () => void
   onDone: (frameIds: string[], failedCount: number) => void
 }) {
@@ -840,7 +854,7 @@ function ImportModal({
               </Button>
             </ModalActions>
             <SyncKeysSection canvasId={canvasId} />
-            <GithubSection canvasId={canvasId} onReview={openRepoReview} />
+            <GithubSection canvasId={canvasId} installPass={installPass} onReview={openRepoReview} />
           </>
         ) : (
           <>
@@ -1257,18 +1271,25 @@ function SyncKeysSection({ canvasId }: { canvasId: string }) {
   )
 }
 
-/* GitHub as an import source: connect a repo with a fine-grained token, let
-   doop enumerate its screens, and review them before anything lands. The
-   token stays on the server — this section only ever sees connection
-   metadata. Same durable-access rule as sync keys. */
+/* GitHub as an import source: one click installs the doop GitHub App on the
+   repos you pick and you land back here on a repo picker — no tokens to
+   copy. Pasting a fine-grained PAT stays as the fallback when the app isn't
+   configured (self-hosters) or someone prefers it. Credentials stay on the
+   server either way — this section only ever sees connection metadata.
+   Same durable-access rule as sync keys. */
 function GithubSection({
   canvasId,
+  installPass,
   onReview,
 }: {
   canvasId: string
+  installPass: string | null
   onReview: (connection: GithubConnectionInfo, manifest: RepoManifest) => void
 }) {
   const [connections, setConnections] = useState<GithubConnectionInfo[] | null>(null)
+  const [appEnabled, setAppEnabled] = useState(false)
+  const [showTokenForm, setShowTokenForm] = useState(false)
+  const [pickerRepos, setPickerRepos] = useState<InstallationRepo[] | null>(null)
   const [repo, setRepo] = useState('')
   const [token, setToken] = useState('')
   const [deployUrl, setDeployUrl] = useState('')
@@ -1285,11 +1306,52 @@ function GithubSection({
         if (e instanceof ApiError && e.status === 403) setForbidden(true)
         setConnections([])
       })
+    api
+      .githubAppInfo()
+      .then((info) => setAppEnabled(info.enabled))
+      .catch(() => setAppEnabled(false))
   }, [canvasId])
+
+  /* back from GitHub's install screen: swap the pass for the repo list */
+  useEffect(() => {
+    if (!installPass) return
+    api
+      .listInstallationRepos(canvasId, installPass)
+      .then(setPickerRepos)
+      .catch((e) => failed(e, 'could not list the installed repositories'))
+  }, [canvasId, installPass])
 
   function failed(caught: unknown, fallback: string) {
     setError(caught instanceof ApiError ? String(caught.body.error ?? fallback) : fallback)
     setBusy(null)
+  }
+
+  async function startInstall() {
+    if (busy) return
+    setBusy('connecting')
+    setError(null)
+    try {
+      const { url } = await api.startGithubInstall(canvasId)
+      posthog.capture('github_app_install_started')
+      location.href = url
+    } catch (e) {
+      failed(e, 'could not start the GitHub install')
+    }
+  }
+
+  async function connectInstalledRepo(fullName: string) {
+    if (busy || !installPass) return
+    setBusy('connecting')
+    setError(null)
+    try {
+      const conn = await api.connectGithub(canvasId, { repo: fullName, pass: installPass })
+      setConnections((c) => [conn, ...(c ?? [])])
+      setPickerRepos((r) => r?.filter((x) => x.fullName !== fullName) ?? null)
+      setBusy(null)
+      posthog.capture('github_repo_connected', { via: 'app' })
+    } catch (e) {
+      failed(e, 'could not connect the repository')
+    }
   }
 
   async function connectRepo() {
@@ -1307,7 +1369,7 @@ function GithubSection({
       setToken('')
       setDeployUrl('')
       setBusy(null)
-      posthog.capture('github_repo_connected')
+      posthog.capture('github_repo_connected', { via: 'token' })
     } catch (e) {
       failed(e, 'could not connect the repository')
     }
@@ -1358,8 +1420,10 @@ function GithubSection({
     <div className="mt-3.5 flex flex-col gap-2.5 border-t border-line-soft pt-3.5">
       <h3 className="text-[13px] font-semibold text-ink">Or connect a GitHub repo</h3>
       <Note>
-        Doop reads the repo's routing conventions and lists its screens for review — nothing lands until you pick. Use a
-        fine-grained token scoped to the one repo, read-only contents. The token never leaves the server.
+        Doop reads the repo's routing conventions and lists its screens for review — nothing lands until you pick.
+        {appEnabled
+          ? ' Install the doop app on the repos you choose; access is scoped to exactly those and revocable on GitHub.'
+          : ' Use a fine-grained token scoped to the one repo, read-only contents. The token never leaves the server.'}
       </Note>
       {(connections ?? []).map((conn) => (
         <div key={conn.id} className="flex items-center gap-2 text-[13px]">
@@ -1389,49 +1453,90 @@ function GithubSection({
           </Button>
         </div>
       ))}
-      <div className="flex flex-col gap-2">
-        <div className="flex flex-col items-stretch gap-2 sm:flex-row">
-          <Input
-            className="flex-1 rounded-[10px] bg-paper font-mono text-[12px] focus:ring-0"
-            placeholder="owner/repository"
-            value={repo}
-            disabled={!!busy}
-            onChange={(e) => {
-              setRepo(e.target.value)
-              setError(null)
-            }}
-          />
-          <Input
-            className="flex-1 rounded-[10px] bg-paper font-mono text-[12px] focus:ring-0"
-            type="password"
-            placeholder="Fine-grained token (github_pat_…)"
-            value={token}
-            disabled={!!busy}
-            onChange={(e) => {
-              setToken(e.target.value)
-              setError(null)
-            }}
-          />
+      {pickerRepos && (
+        <div className="flex flex-col gap-1.5 rounded-[11px] border border-line bg-paper p-2.5">
+          <b className="text-[12px] text-ink-soft">Pick a repository to connect to this canvas</b>
+          {pickerRepos.map((r) => (
+            <div key={r.fullName} className="flex items-center gap-2 text-[13px]">
+              <GithubIcon width={13} height={13} className="shrink-0 text-ink-faint" />
+              <span className="min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap font-mono text-[12px]">
+                {r.fullName}
+                {r.private && <span className="ml-1.5 text-[10px] text-ink-faint">private</span>}
+              </span>
+              <Button
+                size="sm"
+                className="px-2.5 text-xs"
+                disabled={!!busy}
+                onClick={() => connectInstalledRepo(r.fullName)}
+              >
+                {busy === 'connecting' ? 'Connecting…' : 'Connect'}
+              </Button>
+            </div>
+          ))}
+          {!pickerRepos.length && <Note>All installed repositories are connected.</Note>}
         </div>
-        <div className="flex flex-col items-stretch gap-2 sm:flex-row">
-          <Input
-            className="flex-1 rounded-[10px] bg-paper font-mono text-[12px] focus:ring-0"
-            placeholder="Deployed URL for live captures (optional)"
-            value={deployUrl}
-            disabled={!!busy}
-            onChange={(e) => setDeployUrl(e.target.value)}
-            onKeyDown={(e) => e.key === 'Enter' && connectRepo()}
-          />
-          <Button
-            variant="primary"
-            className="justify-center"
-            disabled={!!busy || !repo.trim() || !token.trim()}
-            onClick={connectRepo}
-          >
-            {busy === 'connecting' ? 'Connecting…' : 'Connect'}
-          </Button>
+      )}
+      {appEnabled && !pickerRepos && (
+        <Button variant="primary" className="justify-center gap-2 self-start" disabled={!!busy} onClick={startInstall}>
+          <GithubIcon width={14} height={14} />
+          {busy === 'connecting' ? 'Opening GitHub…' : 'Connect GitHub'}
+        </Button>
+      )}
+      {appEnabled && !showTokenForm && (
+        <Button
+          variant="bare"
+          size="sm"
+          className="self-start p-0 font-mono text-[10.5px] text-ink-faint hover:bg-transparent hover:text-accent-ink"
+          onClick={() => setShowTokenForm(true)}
+        >
+          paste a token instead
+        </Button>
+      )}
+      {(!appEnabled || showTokenForm) && (
+        <div className="flex flex-col gap-2">
+          <div className="flex flex-col items-stretch gap-2 sm:flex-row">
+            <Input
+              className="flex-1 rounded-[10px] bg-paper font-mono text-[12px] focus:ring-0"
+              placeholder="owner/repository"
+              value={repo}
+              disabled={!!busy}
+              onChange={(e) => {
+                setRepo(e.target.value)
+                setError(null)
+              }}
+            />
+            <Input
+              className="flex-1 rounded-[10px] bg-paper font-mono text-[12px] focus:ring-0"
+              type="password"
+              placeholder="Fine-grained token (github_pat_…)"
+              value={token}
+              disabled={!!busy}
+              onChange={(e) => {
+                setToken(e.target.value)
+                setError(null)
+              }}
+            />
+          </div>
+          <div className="flex flex-col items-stretch gap-2 sm:flex-row">
+            <Input
+              className="flex-1 rounded-[10px] bg-paper font-mono text-[12px] focus:ring-0"
+              placeholder="Deployed URL for live captures (optional)"
+              value={deployUrl}
+              disabled={!!busy}
+              onChange={(e) => setDeployUrl(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && connectRepo()}
+            />
+            <Button
+              variant="primary"
+              className="justify-center"
+              disabled={!!busy || !repo.trim() || !token.trim()}
+              onClick={connectRepo}
+            >
+              {busy === 'connecting' ? 'Connecting…' : 'Connect'}
+            </Button>
+          </div>
         </div>
-      </div>
+      )}
       {error && <p className={errorNoteCls}>{error}</p>}
       {notice && <p className={cn(importNoteCls, 'mt-0')}>{notice}</p>}
     </div>

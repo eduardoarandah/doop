@@ -47,8 +47,15 @@ export interface GithubConnectionInfo {
   deployUrl: string | null
   createdAt: number
   lastSyncedAt: number | null
+  /** how the connection authenticates: the GitHub App, or a pasted token */
+  via: 'app' | 'token'
   /** frames on the canvas imported through this connection */
   frames: number
+}
+
+export interface InstallationRepo {
+  fullName: string
+  private: boolean
 }
 
 export interface RepoScreen {
@@ -189,8 +196,15 @@ export const api = {
   syncFlow: (canvasId: string) => req<SyncFlow>(`/api/canvases/${canvasId}/sync-flow`),
   /* GitHub repos connected as import sources */
   listGithubConnections: (canvasId: string) => req<GithubConnectionInfo[]>(`/api/canvases/${canvasId}/github`),
-  connectGithub: (canvasId: string, input: { repo: string; token: string; branch?: string; deployUrl?: string }) =>
-    req<GithubConnectionInfo>(`/api/canvases/${canvasId}/github`, { method: 'POST', body: JSON.stringify(input) }),
+  connectGithub: (
+    canvasId: string,
+    input: { repo: string; token?: string; pass?: string; branch?: string; deployUrl?: string },
+  ) => req<GithubConnectionInfo>(`/api/canvases/${canvasId}/github`, { method: 'POST', body: JSON.stringify(input) }),
+  githubAppInfo: () => req<{ enabled: boolean; slug: string }>('/api/github/app'),
+  startGithubInstall: (canvasId: string) =>
+    req<{ url: string }>(`/api/canvases/${canvasId}/github/app/start`, { method: 'POST' }),
+  listInstallationRepos: (canvasId: string, pass: string) =>
+    req<InstallationRepo[]>(`/api/canvases/${canvasId}/github/app/repos?pass=${encodeURIComponent(pass)}`),
   deleteGithubConnection: (canvasId: string, connId: string) =>
     req(`/api/canvases/${canvasId}/github/${connId}`, { method: 'DELETE' }),
   analyzeGithub: (canvasId: string, connId: string) =>

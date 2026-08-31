@@ -4,6 +4,7 @@ import { db } from './db/index.ts'
 import { githubConnections } from './db/schema.ts'
 import * as actions from './actions.ts'
 import { sanitizeSnapshotHtml } from './ingest.ts'
+import * as githubApp from './githubApp.ts'
 import type { Actor, Frame } from '../shared/types.ts'
 
 /**
@@ -26,7 +27,10 @@ export interface GithubConnection {
   canvasId: string
   repo: string
   branch: string
-  token: string
+  /** fine-grained PAT — the paste-a-token fallback; null in app mode */
+  token: string | null
+  /** GitHub App installation — the click-to-install flow; null in PAT mode */
+  installationId: string | null
   deployUrl: string | null
   createdBy: string
   createdAt: number
@@ -34,11 +38,19 @@ export interface GithubConnection {
 }
 
 /** What API responses expose — everything but the token. */
-export type GithubConnectionInfo = Omit<GithubConnection, 'token'>
+export type GithubConnectionInfo = Omit<GithubConnection, 'token'> & { via: 'app' | 'token' }
 
 export function connectionInfo(conn: GithubConnection): GithubConnectionInfo {
   const { token: _token, ...info } = conn
-  return info
+  return { ...info, via: conn.installationId ? 'app' : 'token' }
+}
+
+/** The credential a call should use right now: the stored PAT, or a fresh
+ *  short-lived installation token minted through the app. */
+function connectionAuth(conn: Pick<GithubConnection, 'token' | 'installationId'>): Promise<string> {
+  if (conn.installationId) return githubApp.installationToken(conn.installationId)
+  if (conn.token) return Promise.resolve(conn.token)
+  return Promise.reject(new Error('connection has no credential — reconnect the repository'))
 }
 
 const REPO_RE = /^[\w.-]+\/[\w.-]+$/
@@ -76,7 +88,10 @@ async function ghJson<T>(token: string, path: string): Promise<T> {
 export async function createConnection(input: {
   canvasId: string
   repo: string
-  token: string
+  /** PAT mode; mutually exclusive with installationId */
+  token?: string
+  /** app mode — the caller must have verified the install handoff (pass) */
+  installationId?: string
   branch?: string
   deployUrl?: string
   createdBy: string
@@ -86,12 +101,22 @@ export async function createConnection(input: {
     .replace(/^https?:\/\/github\.com\//i, '')
     .replace(/\.git$/, '')
   if (!REPO_RE.test(repo)) throw new Error('repository must be "owner/name"')
-  const token = input.token.trim()
-  if (!token) throw new Error('a fine-grained personal access token is required')
+  const token = input.token?.trim() || null
+  const installationId = input.installationId?.trim() || null
+  if (!token && !installationId) throw new Error('a fine-grained personal access token is required')
+
+  /* App mode grants exactly the installation's repos — refuse anything the
+     user did not select on GitHub's install screen. */
+  if (installationId) {
+    const repos = await githubApp.listInstallationRepos(installationId)
+    if (!repos.some((r) => r.fullName.toLowerCase() === repo.toLowerCase()))
+      throw new Error('that repository is not part of the GitHub App installation')
+  }
 
   /* Verify reachability up front and pick up the repo's own metadata: the
      default branch when none was given, the homepage as the capture base. */
-  const meta = await ghJson<{ default_branch: string; homepage: string | null }>(token, `/repos/${repo}`)
+  const auth = await connectionAuth({ token, installationId })
+  const meta = await ghJson<{ default_branch: string; homepage: string | null }>(auth, `/repos/${repo}`)
   const branch = input.branch?.trim() || meta.default_branch
   let deployUrl: string | null = null
   const candidate = input.deployUrl?.trim() || meta.homepage || ''
@@ -108,6 +133,7 @@ export async function createConnection(input: {
     repo,
     branch,
     token,
+    installationId,
     deployUrl,
     createdBy: input.createdBy,
     createdAt: Date.now(),
@@ -284,7 +310,7 @@ export function detectScreens(paths: string[], pkg: Record<string, unknown> | nu
 /** Fetch the repo's file listing + package.json and build the manifest. */
 export async function analyzeConnection(conn: GithubConnection): Promise<RepoManifest> {
   const tree = await ghJson<{ tree: { path: string; type: string }[]; truncated: boolean }>(
-    conn.token,
+    await connectionAuth(conn),
     `/repos/${conn.repo}/git/trees/${encodeURIComponent(conn.branch)}?recursive=1`,
   )
   const paths = tree.tree.filter((e) => e.type === 'blob').map((e) => e.path)
@@ -320,7 +346,7 @@ const MAX_FILE_BYTES = 1_500_000
 
 async function fetchRepoFile(conn: GithubConnection, path: string): Promise<string> {
   const res = await gh(
-    conn.token,
+    await connectionAuth(conn),
     `/repos/${conn.repo}/contents/${path.split('/').map(encodeURIComponent).join('/')}?ref=${encodeURIComponent(conn.branch)}`,
     'application/vnd.github.raw+json',
   )

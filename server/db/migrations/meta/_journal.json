@@ -50,6 +50,13 @@
       "when": 1788136083709,
       "tag": "0006_known_nightshade",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1788139127832,
+      "tag": "0007_colorful_firedrake",
+      "breakpoints": true
     }
   ]
 }

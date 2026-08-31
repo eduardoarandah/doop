@@ -28,6 +28,7 @@ import {
 } from './assets.ts'
 import * as ingest from './ingest.ts'
 import * as github from './github.ts'
+import * as githubApp from './githubApp.ts'
 import { seed } from './seed.ts'
 import * as allowance from './allowance.ts'
 import * as modelAccounts from './modelAccounts.ts'
@@ -845,10 +846,19 @@ app.post('/api/canvases/:id/github', async (req, res) => {
   const c = requireDurableCanvas(req, res, req.params.id)
   if (!c) return
   try {
+    /* app mode: a signed pass from the install round-trip stands in for the
+       token, binding the GitHub App installation to this canvas */
+    let installationId: string | undefined
+    if (typeof req.body?.pass === 'string') {
+      const verified = githubApp.verifyInstallPass(req.body.pass, c.id)
+      if (!verified) return res.status(400).json({ error: 'the GitHub install handoff expired — connect again' })
+      installationId = verified.installationId
+    }
     const conn = await github.createConnection({
       canvasId: c.id,
       repo: String(req.body?.repo ?? ''),
-      token: String(req.body?.token ?? ''),
+      token: typeof req.body?.token === 'string' ? req.body.token : undefined,
+      installationId,
       branch: typeof req.body?.branch === 'string' ? req.body.branch : undefined,
       deployUrl: typeof req.body?.deployUrl === 'string' ? req.body.deployUrl : undefined,
       createdBy: req.user!.id,
@@ -856,6 +866,54 @@ app.post('/api/canvases/:id/github', async (req, res) => {
     res.json({ ...github.connectionInfo(conn), frames: 0 })
   } catch (e) {
     res.status(400).json({ error: e instanceof Error ? e.message : 'could not connect the repository' })
+  }
+})
+
+/* ---- GitHub App install flow: click Connect on the canvas, pick repos on
+   GitHub's install screen, land back on the canvas with a repo picker. The
+   signed state/pass pair keeps guessable installation ids from being bound
+   to canvases that never started an install (server/githubApp.ts). */
+
+app.get('/api/github/app', (req, res) => {
+  res.json({ enabled: githubApp.appEnabled(), slug: githubApp.appSlug() })
+})
+
+app.post('/api/canvases/:id/github/app/start', (req, res) => {
+  const c = requireDurableCanvas(req, res, req.params.id)
+  if (!c) return
+  if (!githubApp.appEnabled()) return res.status(400).json({ error: 'the GitHub App is not configured' })
+  res.json({ url: githubApp.installUrl(githubApp.signInstallState(c.id, req.user!.id)) })
+})
+
+/* GitHub's post-install redirect (the app's callback URL, with "request
+   user authorization during installation" on). Verifies the state minted at
+   start AND that the OAuth code's user actually owns the installation —
+   installation ids are guessable, and without the ownership proof a valid
+   state could bind someone else's installation. Then swaps state for a pass
+   and returns to the canvas, where the import modal shows the repo picker. */
+app.get('/api/github/app/setup', async (req, res) => {
+  const state = githubApp.verifyInstallState(String(req.query.state ?? ''))
+  const installationId = String(req.query.installation_id ?? '')
+  if (!state || !/^\d+$/.test(installationId)) return res.redirect('/')
+  try {
+    if (!(await githubApp.verifyInstallationOwner(String(req.query.code ?? ''), installationId)))
+      return res.redirect('/')
+  } catch {
+    return res.redirect('/')
+  }
+  const pass = githubApp.signInstallPass(state.canvasId, installationId)
+  res.redirect(`/c/${encodeURIComponent(state.canvasId)}?ghInstall=${encodeURIComponent(pass)}`)
+})
+
+app.get('/api/canvases/:id/github/app/repos', async (req, res) => {
+  const c = requireDurableCanvas(req, res, req.params.id)
+  if (!c) return
+  const verified = githubApp.verifyInstallPass(String(req.query.pass ?? ''), c.id)
+  if (!verified) return res.status(400).json({ error: 'the GitHub install handoff expired — connect again' })
+  try {
+    res.json(await githubApp.listInstallationRepos(verified.installationId))
+  } catch (e) {
+    res.status(400).json({ error: e instanceof Error ? e.message : 'could not list the installation’s repositories' })
   }
 })
 
