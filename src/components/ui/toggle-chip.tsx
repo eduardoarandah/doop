@@ -5,15 +5,15 @@ import { cva, type VariantProps } from 'class-variance-authority'
 import { cn } from '@/lib/utils'
 
 /* The plan/model pickers: a row of soft pills where the chosen one snaps to
-   the hard-shadow treatment. `idle` is the read-only form used on rows that
+   the ink hairline instead of the soft one. `idle` is the read-only form used on rows that
    only list what a connection can do. */
 const toggleChipVariants = cva(
-  'inline-flex items-center gap-[7px] rounded-[9px] border px-3 py-2 text-[13px] font-medium transition-[background-color,color,box-shadow,border-color]',
+  'inline-flex items-center gap-[7px] rounded-md border px-3 py-2 text-[13px] font-medium transition-[background-color,color,box-shadow,border-color]',
   {
     variants: {
       state: {
         off: 'cursor-pointer border-transparent bg-paper-deep text-ink-soft hover:text-ink',
-        on: 'border-ink bg-surface font-semibold text-ink shadow-[2px_2px_0_rgba(18,18,23,0.9)]',
+        on: 'border-ink bg-surface font-semibold text-ink',
         idle: 'cursor-default border-transparent bg-paper-deep text-ink-soft opacity-75',
       },
     },
@@ -50,7 +50,7 @@ function ToggleChipItem({ className, ...props }: React.ComponentProps<typeof Tog
       data-slot="toggle-chip"
       className={cn(
         toggleChipVariants({ state: 'off' }),
-        'focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ink data-[state=on]:border-ink data-[state=on]:bg-surface data-[state=on]:font-semibold data-[state=on]:text-ink data-[state=on]:shadow-[2px_2px_0_rgba(18,18,23,0.9)]',
+        'focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ink data-[state=on]:border-ink data-[state=on]:bg-surface data-[state=on]:font-semibold data-[state=on]:text-ink ',
         className,
       )}
       {...props}

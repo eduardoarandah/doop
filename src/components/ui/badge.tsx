@@ -13,13 +13,13 @@ const badgeVariants = cva(
     variants: {
       tone: {
         default: 'border-line bg-paper-deep text-ink-soft',
-        admin: 'border-accent-ink/40 bg-brand/[0.08] text-accent-ink',
+        admin: 'border-accent-ink/40 bg-accent-ink/[0.08] text-accent-ink',
         banned: 'border-[#8a5b00]/35 bg-[#ffb800]/[0.12] text-[#8a5b00]',
         accent: 'border-accent-ink/40 bg-transparent text-accent-ink',
         outline: 'border-line bg-transparent text-ink-soft',
       },
       interactive: {
-        true: 'cursor-pointer transition-colors hover:bg-brand/10',
+        true: 'cursor-pointer transition-colors hover:bg-current/10',
         false: '',
       },
     },

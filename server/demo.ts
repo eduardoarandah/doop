@@ -25,12 +25,12 @@ const WELCOME_HTML = `<!doctype html>
 <html>
 <head>
 <style>
-  @import url('https://fonts.googleapis.com/css2?family=Archivo:wght@600&display=swap');
+  @import url('https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Instrument+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap');
   * { margin: 0; box-sizing: border-box; }
   body {
-    font-family: Georgia, 'Times New Roman', serif;
-    background: #efece4;
-    color: #1c1a15;
+    font-family: 'Instrument Sans', system-ui, sans-serif;
+    background: #fdfdfc;
+    color: #111110;
     height: 100vh;
     padding: 48px 52px;
     display: flex;
@@ -38,33 +38,33 @@ const WELCOME_HTML = `<!doctype html>
     overflow: hidden;
   }
   .eyebrow {
-    font-family: ui-monospace, monospace;
+    font-family: 'IBM Plex Mono', ui-monospace, monospace;
     font-size: 11px;
     letter-spacing: .28em;
     text-transform: uppercase;
-    color: #c23a25;
+    color: #2743ee;
     margin-bottom: 18px;
   }
-  h1 { font-size: 40px; line-height: 1.08; font-weight: 400; max-width: 12em; }
-  h1 em { font-style: italic; color: #e5533c; }
-  .lede { margin-top: 16px; max-width: 36em; line-height: 1.55; font-size: 15px; color: #5c5749; }
+  h1 { font-family: 'Instrument Serif', Georgia, serif; font-size: 44px; line-height: 1.05; font-weight: 400; letter-spacing: -0.015em; max-width: 12em; }
+  h1 em { font-style: italic; color: #2743ee; }
+  .lede { margin-top: 16px; max-width: 36em; line-height: 1.55; font-size: 15px; color: #6e6b66; }
   .steps { margin-top: 28px; display: flex; flex-direction: column; gap: 12px; }
   .step { display: flex; gap: 14px; align-items: baseline; }
   .n {
-    font-family: ui-monospace, monospace;
+    font-family: 'IBM Plex Mono', ui-monospace, monospace;
     font-size: 12px;
-    color: #efece4;
-    background: #1c1a15;
+    color: #fdfdfc;
+    background: #111110;
     border-radius: 999px;
     width: 22px; height: 22px;
     display: inline-flex; align-items: center; justify-content: center;
     flex: none;
   }
-  .step p { font-size: 14.5px; line-height: 1.5; color: #333026; }
+  .step p { font-size: 14.5px; line-height: 1.5; color: #2b2a27; }
   .step code {
-    font-family: ui-monospace, monospace;
+    font-family: 'IBM Plex Mono', ui-monospace, monospace;
     font-size: 12.5px;
-    background: #e7e3d8;
+    background: #f1efea;
     padding: 2px 7px;
     border-radius: 5px;
     white-space: nowrap;
@@ -75,29 +75,28 @@ const WELCOME_HTML = `<!doctype html>
     display: inline-flex;
     align-items: center;
     gap: 7px;
-    font-family: 'Archivo', system-ui, sans-serif;
+    font-family: 'Instrument Sans', system-ui, sans-serif;
     font-size: 13px;
     font-weight: 600;
-    background: #e5533c;
-    border: 1px solid #c23a25;
+    background: #2743ee;
+    border: 1px solid #2743ee;
     color: #fff;
     padding: 8px 14px;
-    border-radius: 9px;
-    box-shadow: 2px 2px 0 #c23a25;
+    border-radius: 8px;
     white-space: nowrap;
     margin: 0 6px 0 3px;
   }
   .foot {
     margin-top: auto;
     padding-top: 24px;
-    border-top: 1px solid #d9d4c5;
+    border-top: 1px solid #d9d6cf;
     font-size: 13px;
-    color: #98927f;
+    color: #9a968e;
     display: flex;
     justify-content: space-between;
     align-items: baseline;
   }
-  .sig { font-style: italic; color: #5c5749; }
+  .sig { font-family: 'Instrument Serif', Georgia, serif; font-style: italic; font-size: 15px; color: #6e6b66; }
 </style>
 </head>
 <body>

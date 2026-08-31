@@ -33,7 +33,7 @@ function PanelHeader({ className, ...props }: React.ComponentProps<'header'>) {
     <header
       data-slot="panel-header"
       className={cn(
-        'sticky top-0 z-[2] flex shrink-0 items-center justify-between gap-1 border-b border-line-soft bg-surface px-4 py-[13px] font-display text-[13px] font-semibold uppercase tracking-[0.12em] text-ink-soft',
+        'sticky top-0 z-[2] flex shrink-0 items-center justify-between gap-1 border-b border-line-soft bg-surface px-4 py-[13px] font-mono text-[11.5px] font-medium uppercase tracking-[0.1em] text-ink-soft',
         className,
       )}
       {...props}
@@ -74,7 +74,7 @@ function PanelTab({ className, ...props }: React.ComponentProps<typeof TabsPrimi
     <TabsPrimitive.Trigger
       data-slot="panel-tab"
       className={cn(
-        'rounded-[7px] px-2 py-[3px] font-display text-xs font-semibold uppercase tracking-[0.08em] text-ink-faint transition-colors hover:text-ink focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ink data-[state=active]:bg-paper-deep data-[state=active]:text-ink',
+        'rounded-sm px-2 py-[3px] font-mono text-[11px] font-medium uppercase tracking-[0.09em] text-ink-faint transition-colors hover:text-ink focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ink data-[state=active]:bg-paper-deep data-[state=active]:text-ink',
         className,
       )}
       {...props}

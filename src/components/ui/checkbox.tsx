@@ -49,7 +49,7 @@ function CheckboxCard({
       className={cn(
         'relative mt-3.5 grid cursor-pointer grid-cols-[22px_1fr] items-start gap-3 rounded-[11px] border border-line bg-surface p-[15px] transition-[border-color,background] hover:border-ink-faint',
         checked &&
-          'border-ink hover:border-ink [background:linear-gradient(110deg,rgba(229,83,60,0.06),transparent_72%),var(--surface)]',
+          'border-ink hover:border-ink [background:linear-gradient(110deg,rgba(39,67,238,0.05),transparent_72%),var(--surface)]',
         className,
       )}
     >

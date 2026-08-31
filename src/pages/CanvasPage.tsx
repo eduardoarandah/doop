@@ -356,7 +356,7 @@ export function CanvasPage({ canvasId }: { canvasId: string }) {
               )}
             >
               {pendingProposal && mutedProposal !== pendingProposal.id && !(showActivity && panelTab === 'memory') && (
-                <div className="flex items-center rounded-[10px] border border-brand bg-white shadow-[2px_2px_0_var(--accent-ink)]">
+                <div className="flex items-center rounded-[10px] border border-brand bg-white shadow-card">
                   <Button
                     variant="bare"
                     className="py-[9px] pl-3.5 pr-1 text-[12.5px] font-bold text-accent-ink hover:bg-transparent hover:text-accent-ink"
@@ -789,7 +789,9 @@ function ImportModal({
                   <span
                     className={cn(
                       'rounded-full px-2 py-[3px] font-mono text-[8.5px] font-semibold uppercase tracking-[0.08em]',
-                      screen.source === 'placeholder' ? 'bg-paper-deep text-ink-faint' : 'bg-brand/10 text-accent-ink',
+                      screen.source === 'placeholder'
+                        ? 'bg-paper-deep text-ink-faint'
+                        : 'bg-accent-ink/10 text-accent-ink',
                     )}
                   >
                     {kindLabel(screen)}
@@ -869,7 +871,7 @@ function ImportModal({
                 id="import-url"
                 variant="mono"
                 inputSize="lg"
-                className="bg-paper focus:bg-white focus:shadow-[3px_3px_0_var(--line)] focus:ring-0"
+                className="bg-paper focus:border-ink focus:bg-white focus:ring-0"
                 autoFocus
                 placeholder="https://example.com"
                 value={url}
@@ -1195,7 +1197,7 @@ function ShareModal({ canvasId, onClose, onCopied }: { canvasId: string; onClose
                 <Button
                   variant="bare"
                   size="icon-sm"
-                  className="flex-none text-[13px] hover:bg-brand/10 hover:text-accent-ink"
+                  className="flex-none text-[13px] hover:bg-accent-ink/10 hover:text-accent-ink"
                   title={p.userId === meId ? 'Leave this canvas' : 'Remove'}
                   onClick={() => remove(p.userId)}
                 >
@@ -1301,7 +1303,7 @@ function SyncKeysSection({ canvasId }: { canvasId: string }) {
             <Button
               variant="bare"
               size="icon-sm"
-              className="-mr-1.5 text-[13px] hover:bg-brand/10 hover:text-accent-ink"
+              className="-mr-1.5 text-[13px] hover:bg-accent-ink/10 hover:text-accent-ink"
               title="Revoke this key"
               onClick={() => revoke(k.id)}
             >
@@ -1493,7 +1495,7 @@ function GithubSection({
             <Button
               variant="bare"
               size="icon-sm"
-              className="-mr-1.5 text-[13px] hover:bg-brand/10 hover:text-accent-ink"
+              className="-mr-1.5 text-[13px] hover:bg-accent-ink/10 hover:text-accent-ink"
               title="Disconnect this repository"
               onClick={() => disconnect(conn.id)}
             >

@@ -8,8 +8,8 @@ import { cn } from '@/lib/utils'
 const labelVariants = cva('block text-ink-soft', {
   variants: {
     variant: {
-      caption: 'mb-1 text-[10.5px] font-bold uppercase tracking-[0.1em] text-ink-faint',
-      form: 'mb-1.5 text-xs font-semibold uppercase tracking-[0.04em]',
+      caption: 'mb-1 font-mono text-[10px] font-medium uppercase tracking-[0.12em] text-ink-faint',
+      form: 'mb-1.5 font-mono text-[10.5px] font-medium uppercase tracking-[0.09em] text-ink-soft',
       plain: 'mb-1 text-[13px] font-semibold text-ink',
     },
   },

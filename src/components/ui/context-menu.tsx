@@ -47,7 +47,7 @@ function ContextMenuItem({
         /* Radix drives hover AND keyboard focus through data-highlighted, so
            the two states cannot drift apart */
         'cursor-pointer outline-none data-[highlighted]:bg-line-soft data-[disabled]:pointer-events-none data-[disabled]:text-ink-faint',
-        tone === 'danger' && 'data-[highlighted]:bg-brand/10',
+        tone === 'danger' && 'data-[highlighted]:bg-accent-ink/10',
         className,
       )}
       {...props}

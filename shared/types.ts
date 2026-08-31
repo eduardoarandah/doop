@@ -297,12 +297,12 @@ export type ServerMessage =
   | { type: 'activity'; item: ActivityItem }
 
 export const CURSOR_PALETTE = [
-  '#E5533C', // vermillion
-  '#2D5FE0', // cobalt
-  '#1E7A4C', // forest
-  '#7A3FE0', // violet
-  '#D62A7E', // magenta
+  '#2743EE', // cursor blue — the brand accent leads
+  '#0E9F6E', // green
+  '#8B5CF6', // violet
+  '#D0341F', // vermillion
   '#C77800', // amber
+  '#D62A7E', // magenta
   '#0E8A8A', // teal
   '#8E2E5C', // plum
 ]

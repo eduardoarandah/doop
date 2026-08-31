@@ -1,21 +1,16 @@
-/** The layered D: two stacked frames — the human's layer over the agent's —
- *  forming Doop's initial. (From the founder's sketch, identity round 7.) */
+/** The Disc-D: a half-disc with a dot resting under its stem, reading as
+ *  Doop's initial — the frame and the cursor beside it. (Identity round 10.)
+ *
+ *  The tile is part of the mark, so every call site gets the same lockup
+ *  without having to supply its own background. */
 export function Logo({ className = 'size-[30px]' }: { className?: string }) {
   return (
-    <svg className={className} viewBox="0 0 100 100" aria-hidden>
-      <rect width="100" height="100" rx="20" fill="#1C1A15" />
-      <path
-        d="M37 31 H63 A10 10 0 0 1 73 41 V63 A10 10 0 0 1 63 73 H37 Z"
-        fill="none"
-        stroke="#E5533C"
-        strokeWidth="6"
-      />
-      <path
-        d="M28 22 H54 A10 10 0 0 1 64 32 V54 A10 10 0 0 1 54 64 H28 Z"
-        fill="none"
-        stroke="#F2EFE6"
-        strokeWidth="6"
-      />
+    <svg className={className} viewBox="0 0 200 200" aria-hidden>
+      <rect width="200" height="200" rx="48" fill="#111110" />
+      <g fill="#fdfdfc" transform="translate(14,0)">
+        <path d="M78 36 A 64 64 0 0 1 78 164 Z" />
+        <circle cx="50" cy="146" r="19" />
+      </g>
     </svg>
   )
 }

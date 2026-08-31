@@ -83,7 +83,7 @@ function DashMain({ className, ...props }: React.ComponentProps<'section'>) {
     <section
       data-slot="dash-main"
       className={cn(
-        'flex min-w-0 flex-col overflow-hidden [background:radial-gradient(circle_at_88%_-6%,rgba(229,83,60,0.07),transparent_42%),radial-gradient(circle,var(--dot)_1px,transparent_1px)_0_0/26px_26px,var(--paper)]',
+        'flex min-w-0 flex-col overflow-hidden [background:radial-gradient(circle,var(--dot)_1px,transparent_1px)_0_0/26px_26px,var(--paper)]',
         className,
       )}
       {...props}
@@ -124,7 +124,7 @@ function DashTitle({ className, ...props }: React.ComponentProps<'h1'>) {
     <h1
       data-slot="dash-title"
       className={cn(
-        'font-display text-[28px] font-extrabold leading-[1.08] tracking-[-0.028em] md:text-[30px] md:leading-none',
+        'font-serif text-[34px] font-normal leading-[1.05] tracking-[-0.015em] md:text-[38px] md:leading-none',
         className,
       )}
       {...props}

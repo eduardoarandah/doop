@@ -83,10 +83,7 @@ export function MemoryPanel() {
       )}
 
       {pending.map((p) => (
-        <div
-          key={p.id}
-          className="mx-4 mt-3 rounded-[12px] border border-brand bg-white px-3.5 py-3 shadow-[2px_2px_0_var(--accent-ink)]"
-        >
+        <div key={p.id} className="mx-4 mt-3 rounded-[12px] border border-brand bg-white px-3.5 py-3 shadow-card">
           <div className="text-[10.5px] font-extrabold uppercase tracking-[0.08em] text-accent-ink">
             ✦ Memory suggestion
           </div>

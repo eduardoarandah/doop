@@ -6,12 +6,13 @@ import { cn } from '@/lib/utils'
 const cardVariants = cva('min-w-0 border bg-surface', {
   variants: {
     tone: {
-      default: 'rounded-[14px] border-line shadow-card',
+      default: 'rounded-[10px] border-line shadow-card',
       /* settings/admin sections: a flat panel that groups rows */
-      flat: 'rounded-[14px] border-line',
-      /* clickable tiles (canvas cards) get the hard-shadow lift */
+      flat: 'rounded-[10px] border-line',
+      /* clickable tiles (canvas cards): the hairline darkens to ink on hover
+         — the lift is in the rule, not under the card */
       raised:
-        'rounded-[14px] border-ink shadow-[3px_3px_0_rgba(18,18,23,0.9)] transition-[translate,box-shadow] hover:-translate-x-px hover:-translate-y-px hover:shadow-[5px_5px_0_rgba(18,18,23,0.9)]',
+        'rounded-[10px] border-line shadow-card transition-[border-color,box-shadow] hover:border-ink hover:shadow-pop',
     },
   },
   defaultVariants: { tone: 'default' },

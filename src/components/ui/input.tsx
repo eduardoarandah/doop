@@ -12,7 +12,7 @@ export const fieldVariants = cva(
     variants: {
       variant: {
         default:
-          'rounded-[9px] border border-line bg-surface px-3 focus:border-ink focus:ring-[3px] focus:ring-ink/[0.07] md:text-[13.5px]',
+          'rounded-md border border-line bg-surface px-3 focus:border-ink focus:ring-[3px] focus:ring-ink/[0.07] md:text-[13.5px]',
         /* ids, sizes, coordinates — the inspector's numeric fields */
         mono: 'rounded-lg border border-line bg-surface px-[9px] font-mono focus:border-ink md:text-[13px]',
         /* lives inside another bordered shell (search rows, the prompt bar) */

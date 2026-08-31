@@ -11,7 +11,7 @@ function Toolbar({ className, ...props }: React.ComponentProps<'div'>) {
       data-slot="toolbar"
       role="toolbar"
       className={cn(
-        'flex items-center gap-px rounded-[12px] border border-line bg-surface p-1 shadow-pop sm:gap-1 sm:p-[5px]',
+        'flex items-center gap-px rounded-lg border border-line bg-surface p-1 shadow-pop sm:gap-1 sm:p-[5px]',
         className,
       )}
       {...props}
@@ -25,7 +25,7 @@ function ToolbarButton({ className, ...props }: React.ComponentProps<'button'>) 
       type="button"
       data-slot="toolbar-button"
       className={cn(
-        'min-h-10 rounded-lg border-0 bg-transparent px-[9px] py-[7px] text-[13px] font-semibold text-ink-soft transition-colors hover:bg-paper-deep hover:text-ink sm:min-h-0 sm:px-3 sm:py-2',
+        'min-h-10 rounded-sm border-0 bg-transparent px-[9px] py-[7px] font-mono text-[11.5px] font-medium uppercase tracking-[0.07em] text-ink-soft transition-colors hover:bg-paper-deep hover:text-ink sm:min-h-0 sm:px-3 sm:py-2',
         className,
       )}
       {...props}

@@ -157,11 +157,11 @@ export function AuthPage() {
   return (
     <AuthScreen>
       <form
-        className="flex w-[min(400px,100%)] flex-col gap-3.5 rounded-[16px] border border-line bg-surface p-6 pt-[30px] shadow-pop sm:p-9 sm:pb-7"
+        className="flex w-[min(400px,100%)] flex-col gap-3.5 rounded-[12px] border border-line bg-surface p-6 pt-[30px] shadow-pop sm:p-9 sm:pb-7"
         onSubmit={submit}
       >
         <Wordmark className="mb-1.5" />
-        <h1 className="font-display text-[30px] font-semibold leading-[1.1] tracking-[-0.02em]">
+        <h1 className="font-serif text-[34px] font-normal leading-[1.05] tracking-[-0.015em]">
           {mode === 'signin' && 'Welcome back.'}
           {mode === 'signup' && 'Create your account.'}
           {mode === 'forgot' && 'Reset your password.'}

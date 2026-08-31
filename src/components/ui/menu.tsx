@@ -31,7 +31,7 @@ const menuItemVariants = cva(
     variants: {
       tone: {
         default: 'text-ink hover:bg-line-soft',
-        danger: 'text-accent-ink hover:bg-brand/10',
+        danger: 'text-accent-ink hover:bg-accent-ink/10',
       },
     },
     defaultVariants: { tone: 'default' },

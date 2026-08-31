@@ -71,7 +71,7 @@ function ModalTitle({ className, ...props }: React.ComponentProps<typeof DialogP
   return (
     <DialogPrimitive.Title
       data-slot="modal-title"
-      className={cn('font-display text-[22px] font-extrabold tracking-[-0.02em] sm:text-[24px]', className)}
+      className={cn('font-serif text-[26px] font-normal tracking-[-0.012em] sm:text-[28px]', className)}
       {...props}
     />
   )

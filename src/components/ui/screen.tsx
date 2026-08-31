@@ -14,10 +14,7 @@ function AuthScreen({ className, children, ...props }: React.ComponentProps<'div
   return (
     <div
       data-slot="auth-screen"
-      className={cn(
-        'flex h-dvh min-h-dvh flex-col overflow-y-auto bg-paper px-4 py-5 [background-image:radial-gradient(1100px_500px_at_80%_-10%,rgba(229,83,60,0.08),transparent_60%)] sm:p-8 [&>*]:m-auto',
-        className,
-      )}
+      className={cn('flex h-dvh min-h-dvh flex-col overflow-y-auto bg-paper px-4 py-5 sm:p-8 [&>*]:m-auto', className)}
       {...props}
     >
       {children}

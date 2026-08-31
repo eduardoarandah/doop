@@ -194,7 +194,7 @@ export function Board({ canvasId }: { canvasId: string }) {
                 key={t.id}
                 className={cn(
                   cardBase,
-                  'border-accent-ink/45 [background:linear-gradient(145deg,rgba(229,83,60,0.08),var(--surface)_62%)]',
+                  'border-accent-ink/45 [background:linear-gradient(145deg,rgba(208,52,31,0.07),var(--surface)_62%)]',
                 )}
               >
                 <Button

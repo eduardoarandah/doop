@@ -615,7 +615,7 @@ export const FrameView = memo(function FrameView({ frame, raster }: { frame: Fra
                       className={cn(
                         'pointer-events-auto absolute z-[4] grid h-[26px] w-[26px] cursor-pointer place-items-center rounded-[50%_50%_50%_4px] border-2 border-white text-[13px] text-white [transform:translate(-50%,-50%)_scale(min(calc(1/var(--zoom,1)),2.4))] animate-[chip-in_0.25s_ease]',
                         c.failedAt
-                          ? 'bg-accent-ink! font-extrabold shadow-[0_0_0_3px_rgba(229,83,60,0.2),var(--shadow-card)]'
+                          ? 'bg-accent-ink! font-extrabold shadow-[0_0_0_3px_rgba(208,52,31,0.2),var(--shadow-card)]'
                           : 'shadow-card',
                         !c.failedAt &&
                           c.claimedBy &&

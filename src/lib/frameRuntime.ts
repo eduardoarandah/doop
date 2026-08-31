@@ -104,9 +104,9 @@ export const FRAME_BOOTSTRAP = `<!doctype html>
   var editTimer = null
 
   var EDIT_CSS =
-    '[data-v-hover]{outline:1.5px dashed rgba(229,83,60,0.75)!important;outline-offset:2px;cursor:text}' +
-    '[data-v-active]{outline:2px solid rgba(229,83,60,0.9)!important;outline-offset:2px;cursor:text}' +
-    '[data-v-active]:focus{outline:2px solid rgba(229,83,60,0.9)!important}'
+    '[data-v-hover]{outline:1.5px dashed rgba(39,67,238,0.75)!important;outline-offset:2px;cursor:text}' +
+    '[data-v-active]{outline:2px solid rgba(39,67,238,0.9)!important;outline-offset:2px;cursor:text}' +
+    '[data-v-active]:focus{outline:2px solid rgba(39,67,238,0.9)!important}'
 
   function hasOwnText(el) {
     for (var n = el.firstChild; n; n = n.nextSibling) {

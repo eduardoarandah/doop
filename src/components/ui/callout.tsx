@@ -9,7 +9,7 @@ const calloutVariants = cva('rounded-lg border px-3 py-2 text-[13px] leading-[1.
   variants: {
     tone: {
       neutral: 'border-line bg-line-soft text-ink',
-      error: 'border-accent-ink/35 bg-brand/10 text-accent-ink',
+      error: 'border-accent-ink/35 bg-accent-ink/10 text-accent-ink',
       success: 'border-[#3f9c52]/35 bg-[#3f9c52]/10 text-[#2f7a3f]',
     },
   },

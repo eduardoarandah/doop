@@ -49,7 +49,7 @@ function DropdownMenuItem({
       className={cn(
         menuItemVariants({ tone }),
         'cursor-pointer gap-[11px] rounded-[9px] px-2.5 py-[9px] text-[13.5px] outline-none data-[highlighted]:bg-paper-deep data-[disabled]:pointer-events-none data-[disabled]:text-ink-faint',
-        tone === 'danger' && 'data-[highlighted]:bg-brand/10',
+        tone === 'danger' && 'data-[highlighted]:bg-accent-ink/10',
         className,
       )}
       {...props}

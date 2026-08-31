@@ -9,7 +9,7 @@ const textareaVariants = cva(
     variants: {
       variant: {
         default:
-          'rounded-[9px] border border-line bg-surface px-3 py-2.5 transition-[border-color,box-shadow] focus:border-ink focus:ring-[3px] focus:ring-ink/[0.07]',
+          'rounded-md border border-line bg-surface px-3 py-2.5 transition-[border-color,box-shadow] focus:border-ink focus:ring-[3px] focus:ring-ink/[0.07]',
         /* composers: the surrounding card is the field, this is just the text */
         bare: 'border-0 bg-transparent p-0',
       },
