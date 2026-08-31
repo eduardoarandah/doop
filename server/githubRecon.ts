@@ -211,6 +211,110 @@ export function extractHtml(blocks: { type: string; text?: string }[]): { html: 
   return { html, height }
 }
 
+const DESIGN_SYSTEM_PROMPT = `You are Doop's design-system archaeologist. From the given repository files (theme/token modules, tailwind/framework config, global styles, app shell, package.json), distill the product's ACTUAL design system into a style guide for design agents.
+
+Output ONLY markdown with these sections:
+- **Palette** — every meaningful color as hex with its role (ground, ink, accent, success…), taken from the code, not invented.
+- **Typography** — the real faces, weights and scale; include ready-to-paste Google Fonts <link> tags when the fonts are on Google Fonts.
+- **Shape & space** — radii, spacing rhythm, shadows, border style.
+- **Component idioms** — how buttons, cards, inputs and nav actually look (fills, radii, hover states) in a few crisp bullets.
+- **CSS variables** — one ready-to-paste :root block encoding the above.
+Rules the agents must follow verbatim belong here; keep it under 350 lines. No commentary outside the markdown.`
+
+/** Distill the repo's design system into style-guide markdown. Reuses the
+ *  same seeding logic as screen closures but aimed at the system files. */
+export async function extractDesignSystem(
+  conn: GithubConnection,
+  paths: string[],
+  model: NonNullable<Awaited<ReturnType<typeof pickModel>>>,
+): Promise<string> {
+  const seeds = [
+    'package.json',
+    ...paths.filter((p) => !p.includes('node_modules') && /(^|\/)tailwind\.config\.[jt]s$/.test(p)).slice(0, 1),
+    ...paths.filter((p) => !p.includes('node_modules') && /(^|\/)(theme|tokens|colors)\.[jt]sx?$/i.test(p)).slice(0, 3),
+    ...paths
+      .filter((p) => !p.includes('node_modules') && /(^|\/)(globals?|app|main|index)\.(css|scss)$/.test(p))
+      .slice(0, 3),
+    ...paths.filter((p) => !p.includes('node_modules') && /(^|\/)_(document|app)\.[jt]sx$/.test(p)).slice(0, 2),
+  ]
+  const sections: string[] = []
+  let budget = MAX_CLOSURE_BYTES
+  for (const p of [...new Set(seeds)]) {
+    if (budget <= 0) break
+    try {
+      let text = await fetchRepoFile(conn, p)
+      if (text.length > budget) text = text.slice(0, budget)
+      budget -= text.length
+      sections.push(`===== ${p} =====\n${text}`)
+    } catch {
+      /* missing seed — the tree round below can recover it */
+    }
+  }
+  const messages: Parameters<typeof model.run>[0]['messages'] = [
+    {
+      role: 'user',
+      content:
+        `Repository ${conn.repo}. File tree (request more files if the system lives elsewhere):\n` +
+        `${treeExcerpt(paths, 'src/x')}\n\n${sections.join('\n\n')}`,
+    },
+  ]
+  const pathSet = new Set(paths)
+  let requestedBudget = MAX_REQUESTED_BYTES
+  let result = await model.run({
+    system: [{ text: DESIGN_SYSTEM_PROMPT, cache: true }],
+    tools: [REQUEST_FILES_TOOL],
+    messages,
+    maxTokens: 16_000,
+  })
+  if (result.stop_reason === 'tool_use') {
+    const calls = result.content.filter((b) => b.type === 'tool_use')
+    messages.push({ role: 'assistant', content: result.content })
+    const results = []
+    for (const call of calls) {
+      const wanted = (
+        Array.isArray((call.input as { paths?: unknown })?.paths)
+          ? ((call.input as { paths: unknown[] }).paths as unknown[])
+          : []
+      )
+        .map(String)
+        .filter((p) => pathSet.has(p))
+        .slice(0, MAX_REQUESTED_FILES)
+      const parts: string[] = []
+      for (const p of wanted) {
+        if (requestedBudget <= 0) break
+        try {
+          let text = await fetchRepoFile(conn, p)
+          if (text.length > requestedBudget) text = text.slice(0, requestedBudget)
+          requestedBudget -= text.length
+          parts.push(`===== ${p} =====\n${text}`)
+        } catch {
+          parts.push(`===== ${p} =====\n/* unreadable */`)
+        }
+      }
+      results.push({
+        type: 'tool_result' as const,
+        tool_use_id: call.id,
+        content: parts.join('\n\n') || 'none of those paths exist',
+      })
+    }
+    messages.push({ role: 'user', content: results })
+    result = await model.run({
+      system: [{ text: DESIGN_SYSTEM_PROMPT, cache: true }],
+      tools: [],
+      messages,
+      maxTokens: 16_000,
+    })
+  }
+  const md = result.content
+    .filter((b) => b.type === 'text' && 'text' in b)
+    .map((b) => (b as { text: string }).text)
+    .join('\n')
+    .replace(/^```(?:markdown|md)?\s*|```\s*$/g, '')
+    .trim()
+  if (!md) throw new Error('the model returned no design system')
+  return md
+}
+
 const REPO_REF_RE = /(["'(])repo:([^"')\s]+)(["')])/g
 const MAX_TRANSPLANTED_ASSETS = 12
 const TRANSPARENT_PX = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7'
@@ -250,8 +354,9 @@ export function scheduleReconstructions(
   jobs: { frameId: string; screen: RepoScreen }[],
   requester: Actor,
   payerId: string,
+  opts: { designSystem?: boolean } = {},
 ): void {
-  if (!jobs.length) return
+  if (!jobs.length && !opts.designSystem) return
   void (async () => {
     const model = await pickModel(payerId)
     if (!model) return /* no model — outlines stay, which the copy reflects */
@@ -261,7 +366,30 @@ export function scheduleReconstructions(
        of the human who clicked Import. */
     const actor = actions.resolveActor({ name: 'Doop', kind: 'agent', owner: requester.name })
     const paths = await fetchTreePaths(conn)
+
+    /* the design system first: it becomes a pinned canvas guideline every
+       agent follows, and it grounds the sketches below */
+    let designSystemMd = ''
+    if (opts.designSystem) {
+      try {
+        actions.setAgentStatus(conn.canvasId, actor, `Reading ${conn.repo}’s design system — theme, tokens, type`)
+        designSystemMd = await extractDesignSystem(conn, paths, model)
+        const slug = `${conn.repo
+          .split('/')
+          .pop()!
+          .toLowerCase()
+          .replace(/[^a-z0-9-]+/g, '-')}-design-system`
+        actions.setGuideline(conn.canvasId, slug, designSystemMd, actor, undefined, `${conn.repo} design system`)
+      } catch (err) {
+        console.error(`[github-recon] design system extraction for ${conn.repo} failed`, err)
+      }
+    }
+
     const queue = jobs.slice(0, MAX_RECONSTRUCTIONS_PER_IMPORT)
+    if (!queue.length) {
+      actions.setAgentStatus(conn.canvasId, actor, '')
+      return
+    }
     const plural = queue.length === 1 ? 'screen' : 'screens'
     actions.setAgentStatus(
       conn.canvasId,
@@ -288,11 +416,20 @@ export function scheduleReconstructions(
         const closure = await collectClosure(conn, job.screen, paths)
         if (!closure.length) throw new Error('no readable source')
         const source = closure.map((f) => `===== ${f.path} =====\n${f.text}`).join('\n\n')
+        const componentBrief =
+          job.screen.kind === 'component' || job.screen.kind === 'story'
+            ? `This is a COMPONENT, not a page: present it as an isolated library card — a quiet neutral backdrop, the component rendered at natural size, and its key variants/states side by side when the source defines them. Keep the card compact.\n\n`
+            : ''
+        const systemContext = designSystemMd
+          ? `The product's design system, distilled from this repo (follow it exactly):\n${designSystemMd}\n\n`
+          : ''
         const messages: Parameters<NonNullable<typeof model>['run']>[0]['messages'] = [
           {
             role: 'user',
             content:
               `Screen: ${job.screen.title} (route ${job.screen.route}) from ${conn.repo}.\n\n` +
+              componentBrief +
+              systemContext +
               `Repository file tree (investigate with request_files):\n${treeExcerpt(paths, job.screen.sourcePath)}\n\n${source}`,
           },
         ]

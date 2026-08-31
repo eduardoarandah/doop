@@ -164,7 +164,7 @@ export async function deleteConnection(canvasId: string, id: string): Promise<bo
 /* ------------------------------------------------------------------ */
 /* Screen detection — pure functions over the repo's file listing      */
 
-export type ScreenKind = 'page' | 'story' | 'static'
+export type ScreenKind = 'page' | 'story' | 'component' | 'static'
 export type PixelSource = 'static' | 'placeholder'
 
 export interface RepoScreen {
@@ -282,6 +282,21 @@ export function detectScreens(paths: string[], pkg: Record<string, unknown> | nu
     const m = p.match(/(?:^|\/)([^/]+)\.stories\.(?:tsx|jsx|ts|js|mdx)$/)
     if (!m) continue
     screens.push({ kind: 'story', route: p, sourcePath: p, title: m[1]!, dynamic: false, source: 'placeholder' })
+  }
+
+  /* The component library: PascalCase modules under components/ui dirs — the
+     design system made concrete. Small and self-contained, so these
+     reconstruct far more faithfully than whole pages. */
+  const MAX_COMPONENTS = 60
+  let components = 0
+  for (const p of paths) {
+    if (components >= MAX_COMPONENTS) break
+    if (p.includes('node_modules/')) continue
+    const m = p.match(/(?:^|\/)(?:components|ui)\/(?:.*\/)?([A-Z][\w]*)\.(?:tsx|jsx)$/)
+    if (!m) continue
+    if (/\.(stories|test|spec)\./.test(p)) continue
+    components++
+    screens.push({ kind: 'component', route: p, sourcePath: p, title: m[1]!, dynamic: false, source: 'placeholder' })
   }
 
   /* Plain HTML anywhere (marketing pages, committed dist/ output) */
@@ -606,7 +621,8 @@ export async function importScreens(
   for (const screen of selection) {
     try {
       let html: string
-      const width = DEFAULT_W
+      const compact = screen.kind === 'component' || screen.kind === 'story'
+      const width = compact ? 640 : DEFAULT_W
       let height = DEFAULT_H
       const name = screen.title
       let outline = false
@@ -614,7 +630,7 @@ export async function importScreens(
         html = wrapRepoHtml(await fetchRepoFile(conn, screen.sourcePath), conn, screen)
       } else {
         html = placeholderHtml(conn, screen, options.sketch ? 'sketching' : 'plain')
-        height = 800
+        height = compact ? 420 : 800
         outline = true
       }
       const frame = place(name, html, width, height)

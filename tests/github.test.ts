@@ -62,6 +62,21 @@ describe('screen enumeration', () => {
     expect(screens.map((s) => s.route)).toEqual(['/', '/settings'])
   })
 
+  it('detects PascalCase component modules under components/ui dirs', () => {
+    const screens = detectScreens(
+      [
+        'src/components/Button.tsx',
+        'src/components/nav/NavBar.tsx',
+        'src/ui/Card.jsx',
+        'src/components/Button.test.tsx',
+        'src/components/helpers.ts',
+        'src/utils/Format.tsx',
+      ],
+      nextPkg,
+    )
+    expect(screens.filter((s) => s.kind === 'component').map((s) => s.title)).toEqual(['Button', 'NavBar', 'Card'])
+  })
+
   it('sweeps storybook stories and plain html regardless of framework', () => {
     const screens = detectScreens(
       ['src/Button.stories.tsx', 'public/landing.html', 'dist/index.html', 'node_modules/x/y.html'],

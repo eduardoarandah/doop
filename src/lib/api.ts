@@ -58,7 +58,7 @@ export interface InstallationRepo {
 }
 
 export interface RepoScreen {
-  kind: 'page' | 'story' | 'static'
+  kind: 'page' | 'story' | 'component' | 'static'
   route: string
   sourcePath: string
   title: string
@@ -206,10 +206,10 @@ export const api = {
     req(`/api/canvases/${canvasId}/github/${connId}`, { method: 'DELETE' }),
   analyzeGithub: (canvasId: string, connId: string) =>
     req<RepoManifest>(`/api/canvases/${canvasId}/github/${connId}/analyze`, { method: 'POST' }),
-  importGithubScreens: (canvasId: string, connId: string, screens: RepoScreen[]) =>
+  importGithubScreens: (canvasId: string, connId: string, screens: RepoScreen[], designSystem = true) =>
     req<GithubImportResult>(`/api/canvases/${canvasId}/github/${connId}/import`, {
       method: 'POST',
-      body: JSON.stringify({ screens }),
+      body: JSON.stringify({ screens, design_system: designSystem }),
     }),
   guidelineHistory: (canvasId: string, name: string) =>
     req<{ markdown: string; savedAt: number; savedBy: string }[]>(

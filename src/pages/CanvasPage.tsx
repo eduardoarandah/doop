@@ -554,6 +554,7 @@ function ImportModal({
     null,
   )
   const [repoSelected, setRepoSelected] = useState<Set<string>>(new Set())
+  const [extractSystem, setExtractSystem] = useState(true)
 
   function errorMessage(caught: unknown, fallback: string) {
     if (caught instanceof ApiError) return String(caught.body.error ?? fallback)
@@ -657,7 +658,7 @@ function ImportModal({
     setError(null)
     const screens = repoReview.manifest.screens.filter((s) => repoSelected.has(screenKey(s)))
     try {
-      const result = await api.importGithubScreens(canvasId, repoReview.connection.id, screens)
+      const result = await api.importGithubScreens(canvasId, repoReview.connection.id, screens, extractSystem)
       if (!result.frames.length) {
         const reason = result.failures[0]?.error
         setError(reason ? `No screens could be imported — ${reason}` : 'No screens could be imported')
@@ -684,6 +685,8 @@ function ImportModal({
     static: 'from repo',
     placeholder: 'agent sketch',
   }
+  const kindLabel = (s: RepoScreen) =>
+    s.kind === 'component' ? 'component' : s.kind === 'story' ? 'story' : laneLabel[s.source]
 
   return (
     <Modal size="lg" onClose={() => !busy && onClose()}>
@@ -763,11 +766,18 @@ function ImportModal({
                       screen.source === 'placeholder' ? 'bg-paper-deep text-ink-faint' : 'bg-brand/10 text-accent-ink',
                     )}
                   >
-                    {laneLabel[screen.source]}
+                    {kindLabel(screen)}
                   </span>
                 </label>
               ))}
             </div>
+            <CheckboxCard
+              checked={extractSystem}
+              disabled={!!busy}
+              onChange={setExtractSystem}
+              title="Extract the design system into a style guide"
+              description="Palette, type and spacing from the repo's theme — pinned to the canvas, followed by every agent."
+            />
             {repoReview.manifest.truncated && (
               <p className={importNoteCls}>The repository listing was cut short — very large repos show a subset.</p>
             )}

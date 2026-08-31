@@ -979,8 +979,9 @@ app.post('/api/canvases/:id/github/:connId/import', async (req, res) => {
        the requester's own account, else the server tier (same resolution as
        every other agent task, billed to the same person) */
     const sketch = !!(await pickModel(req.user!.id))
+    const designSystem = sketch && req.body?.design_system !== false
     const { pending, ...result } = await github.importScreens(conn, c, req.body?.screens, actor, { sketch })
-    scheduleReconstructions(conn, pending, actor, req.user!.id)
+    scheduleReconstructions(conn, pending, actor, req.user!.id, { designSystem })
     res.json(result)
   } catch (e) {
     res.status(400).json({ error: e instanceof Error ? e.message : 'import failed' })
