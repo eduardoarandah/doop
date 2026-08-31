@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { extractHtml, resolveImport } from '../server/githubRecon.ts'
+import { extractHtml, resolveImport, treeExcerpt } from '../server/githubRecon.ts'
 
 /** The reconstruction pass's pure core: import resolution against a repo
  *  tree, and pulling the HTML document (+ declared height) out of a model
@@ -47,5 +47,26 @@ describe('extractHtml', () => {
     expect(fenced.height).toBe(3000)
     expect(extractHtml([{ type: 'text', text: '<!doctype html><p>x</p>' }]).height).toBe(900)
     expect(() => extractHtml([{ type: 'text', text: 'sorry, no' }])).toThrow(/no HTML/)
+  })
+})
+
+describe('treeExcerpt', () => {
+  it('surfaces styling and locale paths, drops binaries and node_modules', () => {
+    const tree = treeExcerpt(
+      [
+        'src/pages/backup.tsx',
+        'src/styles/theme.ts',
+        'public/locales/en/backup.json',
+        'src/components/Nav.tsx',
+        'node_modules/react/index.js',
+        'public/logo.png',
+        'README.md',
+      ],
+      'src/pages/backup.tsx',
+    )
+    expect(tree).toContain('src/styles/theme.ts')
+    expect(tree).toContain('public/locales/en/backup.json')
+    expect(tree).not.toContain('node_modules')
+    expect(tree).not.toContain('logo.png')
   })
 })

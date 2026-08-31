@@ -27,10 +27,14 @@ import type { Actor } from '../shared/types.ts'
 /** Bounded source closure: the screen's file, its resolvable local imports
  *  (depth-first, small), and the styling context that shapes every screen. */
 const MAX_CLOSURE_FILES = 10
-const MAX_CLOSURE_BYTES = 60_000
+const MAX_CLOSURE_BYTES = 80_000
 const MAX_RECONSTRUCTIONS_PER_IMPORT = 12
 const RECON_CONCURRENCY = 2
 const MODEL_MAX_TOKENS = 20_000
+const MAX_REQUEST_ROUNDS = 2
+const MAX_REQUESTED_FILES = 15
+const MAX_REQUESTED_BYTES = 100_000
+const MAX_TREE_LINES = 400
 
 const RESOLVE_EXTS = ['', '.tsx', '.ts', '.jsx', '.js', '.css', '/index.tsx', '/index.ts', '/index.jsx', '/index.js']
 
@@ -85,18 +89,32 @@ export async function collectClosure(
   const queue: string[] = [screen.sourcePath]
   const seen = new Set<string>(queue)
 
-  /* styling context first-class: the app shell and global styles shape every
-     screen, so include them whenever they exist near the page's root */
+  /* styling and copy context first-class: the app shell, global styles,
+     theme modules and the page's locale files shape what the screen ACTUALLY
+     looks and reads like — without them the model invents a brand */
   const root = screen.sourcePath.includes('/app/')
     ? screen.sourcePath.slice(0, screen.sourcePath.indexOf('/app/') + 5)
     : screen.sourcePath.includes('/pages/')
       ? screen.sourcePath.slice(0, screen.sourcePath.indexOf('/pages/') + 7)
       : ''
+  const slug = (screen.route.split('/').filter(Boolean).pop() ?? 'index').toLowerCase()
+  const clean = (p: string) => !p.includes('node_modules')
   for (const context of [
     root + 'layout.tsx',
     root.replace(/pages\/$/, 'pages/') + '_app.tsx',
-    ...paths.filter((p) => /(^|\/)(globals?|app|main|index)\.css$/.test(p) && !p.includes('node_modules')).slice(0, 2),
-    ...paths.filter((p) => /(^|\/)tailwind\.config\.[jt]s$/.test(p)).slice(0, 1),
+    ...paths.filter((p) => clean(p) && /(^|\/)(globals?|app|main|index)\.css$/.test(p)).slice(0, 2),
+    ...paths.filter((p) => clean(p) && /(^|\/)tailwind\.config\.[jt]s$/.test(p)).slice(0, 1),
+    ...paths.filter((p) => clean(p) && /(^|\/)(theme|tokens|colors)\.[jt]sx?$/i.test(p)).slice(0, 2),
+    /* i18n: the page's own locale file first, else the default English pack */
+    ...paths
+      .filter(
+        (p) =>
+          clean(p) &&
+          /(locales?|i18n|translations?|lang)\//i.test(p) &&
+          /\.(json|[jt]s)$/.test(p) &&
+          (p.toLowerCase().includes(slug) || /(^|\/|\.)en(-us)?(\.|\/)/i.test(p)),
+      )
+      .slice(0, 3),
   ]) {
     if (pathSet.has(context) && !seen.has(context)) {
       seen.add(context)
@@ -126,15 +144,51 @@ export async function collectClosure(
   return files
 }
 
-const SYSTEM_PROMPT = `You are Doop's senior product designer. You receive the source code of ONE screen from a product's repository (the screen's file, some of its imported components, and global styling context). Rewrite it as a single COMPLETE, self-contained HTML document that faithfully renders this screen.
+const SYSTEM_PROMPT = `You are Doop's senior product designer, reconstructing ONE screen of a product from its repository. You receive the screen's source file with some of its imports, plus a listing of the repository's file tree — and a request_files tool to read any other files.
 
-Rules:
-- Interpret the component structure and its styling (Tailwind utility classes, CSS modules, styled components) into real inline <style> CSS. Match the product's actual look — colors, spacing, radii, type — as closely as the source allows.
+INVESTIGATE BEFORE YOU DESIGN. Fidelity to the real product is the whole job, and the two ways reconstructions go wrong are inventing the brand and inventing the copy. Before writing any HTML, make sure you have seen:
+- HOW STYLING IS DONE in this repo: the theme/design-token modules, global stylesheets, tailwind/chakra/styled-components config — whatever defines the real colors, fonts, radii and spacing. If the provided files don't show the brand's actual palette and type, request the files that do.
+- WHERE THE COPY LIVES: if the page renders translation keys or imports content modules, request the locale/content files and use the REAL strings. Never write your own marketing copy when the repository contains the actual words.
+- Shared layout components (nav, footer) the page renders, so the chrome matches the product.
+Use request_files for this — batch what you need; you have a couple of rounds.
+
+Then produce a single COMPLETE, self-contained HTML document that faithfully renders this screen:
+- Translate the component structure and its styling into real inline <style> CSS, using the palette, fonts and tokens you found — not defaults, not guesses.
 - The document is exactly 1280px wide. Choose the natural height for the content and declare it as the LAST line of your output, an HTML comment: <!-- doop-height: 900 -->
-- Replace dynamic data with realistic, specific placeholder content (plausible names, numbers, dates — never lorem ipsum or "Item 1").
+- Dynamic data (user names, table rows, dates) gets realistic, specific placeholder values — never lorem ipsum or "Item 1". Static marketing copy comes from the source, verbatim.
 - No <script> tags, no external CSS or JS. Google Fonts via <link> are allowed when the source names a font.
 - Images: use a solid-color or CSS-gradient stand-in with the right aspect ratio; never invent external image URLs.
 - Start with <!doctype html>. Output ONLY the HTML document (plus the final height comment) — no markdown fences, no commentary.`
+
+const REQUEST_FILES_TOOL = {
+  name: 'request_files',
+  description:
+    'Read files from the repository by path (batch several at once). Use this to inspect theme/design-token modules, global styles, locale/content files and shared components before designing.',
+  input_schema: {
+    type: 'object' as const,
+    properties: {
+      paths: { type: 'array', items: { type: 'string' }, description: 'Repository file paths from the tree listing' },
+    },
+    required: ['paths'],
+  },
+}
+
+/** The tree excerpt the model investigates from: design- and content-relevant
+ *  paths first, then the rest, capped. */
+export function treeExcerpt(paths: string[], sourcePath: string): string {
+  const clean = paths.filter((p) => !p.includes('node_modules/') && !/\.(png|jpe?g|webp|ico|woff2?|ttf|mp4)$/i.test(p))
+  const near = dirOf(sourcePath)
+  const score = (p: string) =>
+    (p.startsWith(near) ? 4 : 0) +
+    (/(theme|token|color|style|css|scss|tailwind|chakra)/i.test(p) ? 3 : 0) +
+    (/(locales?|i18n|translations?|content|copy)/i.test(p) ? 3 : 0) +
+    (/(component|layout|common|shared|ui)/i.test(p) ? 1 : 0)
+  return clean
+    .sort((a, b) => score(b) - score(a))
+    .slice(0, MAX_TREE_LINES)
+    .sort()
+    .join('\n')
+}
 
 export function extractHtml(blocks: { type: string; text?: string }[]): { html: string; height: number } {
   const text = blocks
@@ -196,18 +250,60 @@ export function scheduleReconstructions(
         const closure = await collectClosure(conn, job.screen, paths)
         if (!closure.length) throw new Error('no readable source')
         const source = closure.map((f) => `===== ${f.path} =====\n${f.text}`).join('\n\n')
-        const result = await model!.run({
-          system: [{ text: SYSTEM_PROMPT, cache: true }],
-          tools: [],
-          messages: [
-            {
-              role: 'user',
-              content: `Screen: ${job.screen.title} (route ${job.screen.route}) from ${conn.repo}.\n\n${source}`,
-            },
-          ],
-          maxTokens: MODEL_MAX_TOKENS,
-        })
-        const { html, height } = extractHtml(result.content as { type: string; text?: string }[])
+        const messages: Parameters<NonNullable<typeof model>['run']>[0]['messages'] = [
+          {
+            role: 'user',
+            content:
+              `Screen: ${job.screen.title} (route ${job.screen.route}) from ${conn.repo}.\n\n` +
+              `Repository file tree (investigate with request_files):\n${treeExcerpt(paths, job.screen.sourcePath)}\n\n${source}`,
+          },
+        ]
+        /* the investigation loop: the model reads the tree and pulls the
+           theme/locale/component files it needs before designing */
+        const pathSet = new Set(paths)
+        let requestedBudget = MAX_REQUESTED_BYTES
+        let result = null as Awaited<ReturnType<NonNullable<typeof model>['run']>> | null
+        for (let round = 0; round <= MAX_REQUEST_ROUNDS; round++) {
+          result = await model!.run({
+            system: [{ text: SYSTEM_PROMPT, cache: true }],
+            tools: round < MAX_REQUEST_ROUNDS ? [REQUEST_FILES_TOOL] : [],
+            messages,
+            maxTokens: MODEL_MAX_TOKENS,
+          })
+          if (result.stop_reason !== 'tool_use') break
+          const calls = result.content.filter((b) => b.type === 'tool_use')
+          messages.push({ role: 'assistant', content: result.content })
+          const results = []
+          for (const call of calls) {
+            const wanted = (
+              Array.isArray((call.input as { paths?: unknown })?.paths)
+                ? ((call.input as { paths: unknown[] }).paths as unknown[])
+                : []
+            )
+              .map(String)
+              .filter((p) => pathSet.has(p))
+              .slice(0, MAX_REQUESTED_FILES)
+            const sections: string[] = []
+            for (const p of wanted) {
+              if (requestedBudget <= 0) break
+              try {
+                let text = await fetchRepoFile(conn, p)
+                if (text.length > requestedBudget) text = text.slice(0, requestedBudget) + '\n/* …truncated… */'
+                requestedBudget -= text.length
+                sections.push(`===== ${p} =====\n${text}`)
+              } catch {
+                sections.push(`===== ${p} =====\n/* unreadable */`)
+              }
+            }
+            results.push({
+              type: 'tool_result' as const,
+              tool_use_id: call.id,
+              content: sections.join('\n\n') || 'none of those paths exist in the tree',
+            })
+          }
+          messages.push({ role: 'user', content: results })
+        }
+        const { html, height } = extractHtml((result?.content ?? []) as { type: string; text?: string }[])
         actions.updateFrame(job.frameId, { html: wrapGeneratedHtml(html, conn, job.screen), height }, actor)
       } catch (err) {
         console.error(`[github-recon] ${job.screen.route} failed`, err)
