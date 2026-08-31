@@ -10,20 +10,12 @@ import { Note } from './ui/note'
 
 /**
  * The canvas's front door to the resident team: a prompt bar that queues a
- * board card without anyone having to discover the board first. Suggestions
- * show until the canvas has had its first human-queued card, so a brand-new
- * user is one click away from watching the team design live.
+ * board card without anyone having to discover the board first.
  *
  * Screenshots and images attach via the paperclip (or a paste into the
  * input); on send they land on the canvas as reference frames and the card
  * carries their ids so the agent looks at them before designing.
  */
-
-const SUGGESTIONS = [
-  'A landing page for a specialty coffee brand',
-  'A mobile onboarding flow, three screens side by side',
-  'A pricing page with three tiers, one highlighted',
-]
 
 const MAX_ATTACHMENTS = 4
 const MAX_ATTACHMENT_BYTES = 5 * 1024 * 1024 // mirrors the server's asset cap
@@ -45,7 +37,6 @@ interface Attachment {
 }
 
 export function PromptBar({ canvasId }: { canvasId: string }) {
-  const tasks = useStore((s) => s.tasks)
   const frames = useStore((s) => s.canvas?.frames)
   const { allowance, refresh } = useAllowance()
   const [text, setText] = useState('')
@@ -55,9 +46,6 @@ export function PromptBar({ canvasId }: { canvasId: string }) {
   const [error, setError] = useState<string | null>(null)
   const inputRef = useRef<HTMLInputElement>(null)
   const fileRef = useRef<HTMLInputElement>(null)
-
-  /* first-run: nobody has queued a card on this canvas yet */
-  const fresh = !tasks.some((t) => t.queuedBy)
 
   /* after a submit, the first frame that wasn't on the canvas before gets a
      camera flight — the deliverable must stream in on-screen, never somewhere
@@ -143,10 +131,7 @@ export function PromptBar({ canvasId }: { canvasId: string }) {
         ['doop'],
         refFrames.map((f) => f.id),
       )
-      posthog.capture('prompt_bar_submitted', {
-        suggested: SUGGESTIONS.includes(clean),
-        attachments: refFrames.length,
-      })
+      posthog.capture('prompt_bar_submitted', { attachments: refFrames.length })
       awaiting.current = openFlyWindow(refFrames.map((f) => f.id))
       attachments.forEach((a) => URL.revokeObjectURL(a.preview))
       setAttachments([])
@@ -167,26 +152,6 @@ export function PromptBar({ canvasId }: { canvasId: string }) {
 
   return (
     <div className="absolute bottom-[68px] left-1/2 z-30 flex w-[min(560px,calc(100vw-32px))] -translate-x-1/2 flex-col gap-2 max-md:bottom-[calc(76px+env(safe-area-inset-bottom))] max-md:w-[calc(100vw-16px)] max-md:gap-1.5">
-      {fresh && !sent && (
-        <div className="flex flex-wrap justify-center gap-1.5 max-md:flex-nowrap max-md:justify-start max-md:overflow-x-auto max-md:snap-x max-md:snap-proximity max-md:p-0.5 max-md:[scrollbar-width:none] max-md:[&::-webkit-scrollbar]:hidden">
-          {SUGGESTIONS.map((s) => (
-            <Button
-              key={s}
-              variant="ghost"
-              size="sm"
-              className="max-w-[calc(100vw-48px)] flex-none snap-center overflow-hidden text-ellipsis whitespace-nowrap rounded-full px-3 py-1.5 text-[12.5px] text-ink-soft shadow-card hover:border-ink-soft hover:text-ink sm:max-w-none"
-              disabled={busy}
-              onClick={() => {
-                /* prefill only — the prompt stays theirs to edit and send */
-                setText(s)
-                inputRef.current?.focus()
-              }}
-            >
-              ✦ {s}
-            </Button>
-          ))}
-        </div>
-      )}
       {attachments.length > 0 && (
         <div className="flex gap-2 px-0.5">
           {attachments.map((a) => (
