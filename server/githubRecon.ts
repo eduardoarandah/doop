@@ -156,15 +156,26 @@ export function extractHtml(blocks: { type: string; text?: string }[]): { html: 
 export function scheduleReconstructions(
   conn: GithubConnection,
   jobs: { frameId: string; screen: RepoScreen }[],
-  actor: Actor,
+  requester: Actor,
   payerId: string,
 ): void {
   if (!jobs.length) return
   void (async () => {
     const model = await pickModel(payerId)
     if (!model) return /* no model — outlines stay, which the copy reflects */
+    /* The sketching is the Doop Agent's work, and it should look like it:
+       an agent actor gives it live presence, a task entry ("is working
+       on…") on the board/feed, and frame edits attributed to Doop instead
+       of the human who clicked Import. */
+    const actor = actions.resolveActor({ name: 'Doop', kind: 'agent', owner: requester.name })
     const paths = await fetchTreePaths(conn)
     const queue = jobs.slice(0, MAX_RECONSTRUCTIONS_PER_IMPORT)
+    const plural = queue.length === 1 ? 'screen' : 'screens'
+    actions.setAgentStatus(
+      conn.canvasId,
+      actor,
+      `Sketching ${queue.length} ${plural} from ${conn.repo} — reading source, designing frames`,
+    )
     console.log(`[github-recon] ${queue.length} screen(s) from ${conn.repo} on ${model.label}`)
 
     /* a billing/auth failure is account-wide — one screen proving it is
@@ -207,10 +218,18 @@ export function scheduleReconstructions(
 
     /* small worker pool: steady progress on the canvas without hammering
        the model or the GitHub API */
-    const workers = Array.from({ length: Math.min(RECON_CONCURRENCY, queue.length) }, async () => {
-      for (let job = queue.shift(); job; job = queue.shift()) await runOne(job)
-    })
-    await Promise.all(workers)
+    /* a model turn can outlast the presence TTL — keep Doop visibly in the
+       room for as long as the pass is actually alive */
+    const heartbeat = setInterval(() => actions.heartbeatAgent(conn.canvasId, actor), 15_000)
+    try {
+      const workers = Array.from({ length: Math.min(RECON_CONCURRENCY, queue.length) }, async () => {
+        for (let job = queue.shift(); job; job = queue.shift()) await runOne(job)
+      })
+      await Promise.all(workers)
+    } finally {
+      clearInterval(heartbeat)
+      actions.setAgentStatus(conn.canvasId, actor, '')
+    }
     console.log(`[github-recon] ${conn.repo} done`)
   })().catch((err) => console.error('[github-recon] pass failed', err))
 }
