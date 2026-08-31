@@ -440,10 +440,17 @@ export function wrapGeneratedHtml(
 /** The stand-in frame for a screen that only exists as code. When the agent
  *  is about to reconstruct it, the copy says so ('sketching'); otherwise it
  *  is a plain outline, and a failed run gets an honest note. */
+/* same env read as server/auth.ts — not imported, so the pure parts of this
+   module stay loadable without pulling the auth stack into unit tests */
+const PUBLIC_ORIGIN = process.env.BETTER_AUTH_URL || 'http://localhost:4300'
+
 export function placeholderHtml(
   conn: Pick<GithubConnection, 'id' | 'repo'>,
   screen: { kind: ScreenKind; route: string; sourcePath: string; title: string },
   state: 'plain' | 'sketching' | 'failed' = 'plain',
+  /** the frame's own address, once it exists — makes the agent prompt a
+   *  concrete deep link instead of a description */
+  link?: { canvasId: string; frameId: string },
 ): string {
   const reason =
     state === 'sketching'
@@ -458,12 +465,16 @@ export function placeholderHtml(
      MCP (that agent usually has the repo checked out — the best builder),
      and connecting a model account so the Doop Agent handles it. Only the
      transient 'sketching' card stays quiet. */
+  const prompt = link
+    ? `“On Doop, complete the import of ${PUBLIC_ORIGIN}/c/${encodeURIComponent(link.canvasId)}?frame=${encodeURIComponent(link.frameId)} — this screen’s source is ${escapeHtml(screen.sourcePath)} in ${escapeHtml(conn.repo)}; design the frame from that code.”`
+    : `“On my Doop canvas, design the outline frames imported from ${escapeHtml(conn.repo)} — read each screen’s source (the frame lists its file path) and design a faithful version in place.”`
   const waysForward =
     state === 'sketching'
       ? ''
       : `<p style="margin-top:14px"><b style="color:#444">Use your own agent</b> — with this repo checked out, prompt it:</p>` +
         `<p style="margin-top:8px;font-family:ui-monospace,monospace;font-size:11.5px;background:#f7f7f8;border:1px solid #eee;border-radius:8px;padding:10px 12px;text-align:left">` +
-        `“On my doop canvas, design the outline frames imported from ${escapeHtml(conn.repo)} — read each screen’s source (the frame lists its file path) and set_frame_html a faithful version.”</p>` +
+        prompt +
+        `</p>` +
         `<p style="margin-top:12px"><b style="color:#444">Or connect your ChatGPT subscription</b> in Settings — the Doop Agent then sketches screens like this${state === 'failed' ? ' (delete this frame and re-import to retry)' : ' automatically'}.</p>`
   return (
     '<!doctype html>\n<html><head>' +
@@ -592,7 +603,21 @@ export async function importScreens(
         outline = true
       }
       const frame = place(name, html, width, height)
-      if (frame && outline && options.sketch) pending.push({ frameId: frame.id, screen })
+      if (frame && outline) {
+        /* the frame's id exists only now — re-render the outline so its
+           agent prompt deep-links to this exact frame */
+        actions.updateFrame(
+          frame.id,
+          {
+            html: placeholderHtml(conn, screen, options.sketch ? 'sketching' : 'plain', {
+              canvasId: canvas.id,
+              frameId: frame.id,
+            }),
+          },
+          actor,
+        )
+        if (options.sketch) pending.push({ frameId: frame.id, screen })
+      }
       if (!frame) {
         failures.push({ route: screen.route, error: 'canvas not found' })
         continue

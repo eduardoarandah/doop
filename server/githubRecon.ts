@@ -170,13 +170,15 @@ export function scheduleReconstructions(
     /* a billing/auth failure is account-wide — one screen proving it is
        enough; the rest flip to the actionable 'failed' card without another
        model call each */
+    const failedCard = (job: { frameId: string; screen: RepoScreen }) =>
+      placeholderHtml(conn, job.screen, 'failed', { canvasId: conn.canvasId, frameId: job.frameId })
     let accountDead = false
     const isAccountError = (err: unknown) =>
       err instanceof Error && /credit|billing|quota|api key|unauthorized|401|403/i.test(err.message)
 
     async function runOne(job: { frameId: string; screen: RepoScreen }) {
       if (accountDead) {
-        actions.updateFrame(job.frameId, { html: placeholderHtml(conn, job.screen, 'failed') }, actor)
+        actions.updateFrame(job.frameId, { html: failedCard(job) }, actor)
         return
       }
       try {
@@ -199,7 +201,7 @@ export function scheduleReconstructions(
       } catch (err) {
         console.error(`[github-recon] ${job.screen.route} failed`, err)
         if (isAccountError(err)) accountDead = true
-        actions.updateFrame(job.frameId, { html: placeholderHtml(conn, job.screen, 'failed') }, actor)
+        actions.updateFrame(job.frameId, { html: failedCard(job) }, actor)
       }
     }
 
